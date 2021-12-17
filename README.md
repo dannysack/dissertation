@@ -8,5 +8,5 @@ Each folder only includes the code, folks interested in the primary data should 
 The disseration is available through (TBD)
 
 Folders
-- Cleaning: the code used to clean each source of data
+- Cleaning: the code used to clean each data source
 - Additional chapter folders will be added as they are completed
