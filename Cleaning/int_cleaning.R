@@ -227,6 +227,8 @@ sank <- exp_merge %>%
          m1, m2, m3, m4, m5, m6,
          fem1p, fem2p, fem3p, fem4p, fem5p, fem6p, fem7p, fem8p, fem9p,
          m1p, m2p, m3p, m4p, m5p, m6p, m7p, m8p, m9p)
+# save .rda file for merging to "Data" folder
+options(LoadPath = "../Data/")
 Save(sank)
 
 # for the sake of this analysis, '
@@ -253,6 +255,6 @@ label(int_cleaned$peer_sch) <- "Scheduled Peer Sessions"
 label(int_cleaned$peer_comp) <- "Completed Peer Sessions"
 label(int_cleaned$peer_prop) <- "Proportion Completed Peer Sessions"
 
-# save .rda file for merging to "Date" folder
+# save .rda file for merging to "Data" folder
 options(LoadPath = "../Data/")
 Save(int_cleaned)
