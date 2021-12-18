@@ -22,8 +22,9 @@ Load(clindrive_cleaned)
 # pull in openMRS data
 Load(clin_openrms)
 
-# pull in open mrs clinical data
-## TBD Load(openmrs_cleaned)
+# pull in male clinical data
+Load(male_clin)
+
 
 # redcap and intervention data are long, with males and females individual, whereas clindrive data are wide (open MRS??)
 # eventually want data to be wide, since I only care about outcomes in female participants
@@ -78,15 +79,21 @@ extra_clindrive_df <- clindrive_cleaned[(clindrive_cleaned$codigo.female %nin% w
 red_int_clindrive <- left_join(wide_red_int, clindrive_cleaned,
                                by = c("codigo.female", "codigo.male"))
 
-# now just have to add in openmrs clinical data!
+# now just have to add in openmrs and clinical data!
 
 # start with some checks
 sum(clin_openrms$codigo %in% red_int_clindrive$codigo.female)
 sum(clin_openrms$pt_id %in% red_int_clindrive$pt_id.female)
+sum(male_clin$codigo %in% red_int_clindrive$codigo.male)
+sum(male_clin$pt_id %in% red_int_clindrive$pt_id.male)
 
 red_int_clin_open <- left_join(red_int_clindrive, clin_openrms,
                                by = c("codigo.female" = "codigo",
-                                      "pt_id.female" = "pt_id"))
+                                      "pt_id.female" = "pt_id")) %>%
+  left_join(male_clin, 
+            by = c("codigo.male" = "codigo",
+                        "pt_id.male" = "pt_id"),
+            suffix = c("", ".male"))
 
 # get some missingness information
 table(red_int_clin_open$fp_cont_method, useNA = "always")

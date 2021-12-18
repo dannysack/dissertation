@@ -249,4 +249,27 @@ clin_openrms <- upData(clin_openrms,
 options(LoadPath = "../Data/")
 Save(clin_openrms)
 
+# also need dataset with male art and male height, weight, and bmi
+male_clin <- art %>% filter(sex == "M") %>%
+  select(`Codigo do estudo`, Novo_id_Participante, nid, WHO_clinical_stage_at_art_initiation,
+         weight, height...22, bmi)
 
+# rename columns
+male_clin <- upData(male_clin,
+       rename = c(`Codigo do estudo` = "codigo",
+                  Novo_id_Participante = "pt_id",
+                  WHO_clinical_stage_at_art_initiation = "who_stage",
+                  `height...22` = "height"),
+       labels = c(codigo = "Patient ID for Drive Matching",
+                  pt_id = "Patient ID for OpenMRS Matching",
+                  nid = "NID for OpenMRS Matching",
+                  who_stage = "WHO HIV Clinical Stage",
+                  weight = "Weight",
+                  height = "Height",
+                  bmi = "Body Mass Index"),
+       units = c(weight = "kg",
+                 height = "meters",
+                 bmi = "kg/m^2"))
+
+# now need to save
+Save(male_clin)
