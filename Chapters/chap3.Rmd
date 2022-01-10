@@ -1,0 +1,110 @@
+---
+title: "Chapter 3: Aim 1"
+author: "Danny Sack<br><small>Division of Epidemiology<br>Vanderbilt University School of Medicine</small>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    lightbox: true
+    code_download: true
+description: "HoPS+ Baseline Data"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(Hmisc)
+library(table1)
+library(flextable)
+knitrSet(lang='markdown', fig.path='png/', fig.align='center', w=6, h=4, cache=TRUE)
+options(prType='html')
+set.seed(1111)
+
+# load cleaned data
+options(LoadPath = "../Data/")
+Load(final)
+```
+
+
+# Table X: Baseline data of interviewed participants
+
+```{r tab3}
+# first need to split male and female characteristics and make final long
+fem <- final %>%
+  select(ends_with(".female"), fp_final_binary, fp_final_type, time_to_fp) %>%
+  rename_with(~ gsub(".female", "", .x)) %>%
+  mutate(sex= "Female")
+
+m <- final %>%
+  select(ends_with(".male")) %>%
+  rename_with(~ gsub(".male", "", .x)) %>%
+  mutate(sex= "Male")
+
+# long version
+long <- bind_rows(fem, m %>% select(1:29))
+
+# first create a list of folks with interviews
+# need to confirm when I get the final interview data
+# of note PELF007's partner formally withdrew, so data are not reflected in the table (but I have it from an earlier iteration)
+precov <- c("NABM024", "NABF022", "NABM029", "PELF007",
+            "MDCF024", "MDCM024", "MDCF020", "MDCM018",
+            "MDCF018", "MDCF021", "MDCF025", "GURF012",
+            "GURF018", "GURM012", "GURM019", "GURM020",
+            "GURF020", "GURF027", "GURF019", "PALF012",
+            "PALF011", "MUIF021", "MUIM021", "MUIM025",
+            "MUIF022", "MUIF025", "MUIF027", "MUIM023",
+            "MUIM027")
+
+postcov <- c("NABF049", "NABM051", "NABF052", "NABM052",
+             "NABF054", "MDCF042", "MDCM042", "MDCF043",
+             "MDCM043", "MDCF044", "MDCF046", "MDCF048",
+             "MDCM048", "GURF053", "GURM053", "GURF054",
+             "GURM054", "GURF055", "GURM055", "GURF059",
+             "GURM060", "PALF023", "PALM023", "PALF024", 
+             "PALM024", "PALF025", "PALF026", "PALF027", 
+             "PALM027", "MADF017", "MADM017", "MADF019", 
+             "MADM019", "MUEF031", "MUEM031")
+
+# check for overlap (should all be true)
+postcov %in% long$codigo
+precov %in% long$codigo
+
+# now make df with only qualitative data
+qual <- long %>%
+  filter(codigo %in% c(precov, postcov)) %>%
+  mutate(int_time = ifelse(codigo %in% postcov, "Post", NA),
+         int_time = ifelse(codigo %in% precov, "Pre", int_time),
+         int_time = factor(int_time, levels = c("Pre", "Post")))
+
+# now need to add labels to qual
+label(qual$int_time) <- "Recruitment Relative to COVID-19 Pause"
+label(qual$age) <- "Age"
+units(qual$age) <- "years"
+label(qual$district) <- "District"
+label(qual$rel_stat) <- "Relationship Status"
+label(qual$edu_cat) <- "Education"
+label(qual$job_cat) <- "Occupation"
+label(qual$stigma_com) <- "Perceived Community Stigma"
+label(qual$stigma_pt) <- "Patient Felt/Experienced Stigma"
+label(qual$trust) <- "Physician Trust"
+label(qual$cog_emp) <- "Cognitive Empathy"
+label(qual$aff_emp) <- "Affective Empathy"
+label(qual$soc_sup_ps) <- "Perceived Support"
+label(qual$soc_sup_ns) <- "Needed Support"
+label(qual$hivk) <- "HIV Knowledge (0-27)"
+label(qual$phq9) <- "Patient Health Questionaire-9"
+label(qual$skills_prop) <- "Proportion of Skills Sessions Attended"
+label(qual$peer_prop) <- "Proportion of Peer Support Sessions Attended"
+
+# now make table 3
+table1(~ as.factor(year) + int_time + age + district + rel_stat + 
+         edu_cat + job_cat + 
+         stigma_com + stigma_pt + 
+         trust + cog_emp + aff_emp +
+         soc_sup_ps + soc_sup_ns + 
+         hivk + phq9 +
+         skills_prop + peer_prop +
+         factor(fp_final_binary) + fp_final_type | sex, data = qual, 
+       render.continuous = c(.="Median [Q1, Q3]"), overall = FALSE) %>%
+  t1flex() %>%
+  save_as_docx("tab3", path = "tab3.docx")
+```

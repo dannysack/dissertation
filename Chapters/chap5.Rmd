@@ -1,0 +1,837 @@
+---
+title: "Chapter 5: Aim 3"
+author: "Danny Sack<br><small>Division of Epidemiology<br>Vanderbilt University School of Medicine</small>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    lightbox: true
+    code_download: true
+description: "HoPS+ Baseline Data"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(rms)
+library(table1)
+library(flextable)
+library(ggalluvial)
+library(extrafont)
+library(ggpubr)
+library(WeightIt)
+library(MatchThem)
+library(cobalt)
+library(mice)
+library(lme4)
+library(broom.mixed)
+library(forestplot)
+library(gridExtra)
+library(gtable)
+library(EValue)
+
+loadfonts()
+knitrSet(lang='markdown', fig.path='png/', fig.align='center', w=6, h=4, cache=TRUE)
+options(prType='html')
+set.seed(1111)
+
+# load cleaned data
+options(LoadPath = "../Data/")
+Load(quant)
+
+# start by removing variables not relevant to the imputations or analyses
+aim3 <- quant %>%
+  select(district.female, age.female, day.female, group.female, clinic.female, rel_stat.female, edu_cat.female, job_cat.female,
+         stigma_com.female:peer_prop.female, who_stage, who_stage.male,
+         district.male, age.male, day.male, group.male, rel_stat.male, edu_cat.male, job_cat.male,
+         stigma_com.male:peer_prop.male, fem_int_tot:m_prop_int,
+         time_to_fp, Y_lc:covid_sens) %>%
+  mutate(clinic.female = as.numeric(clinic.female)) %>% # required for imputations
+  arrange(clinic.female) %>%
+  mutate(who_stage = factor(who_stage, levels = c("I", "II", "III", "IV")),
+         who_stage.male = factor(who_stage.male, levels = c("I", "II", "III", "IV"))) %>%
+  filter(group.female == "Intervention")
+```
+
+# Table 9
+
+```{r tab9}
+# make table of completion by male and females in intervention group
+table1(~ factor(skills_comp.female) + skills_prop.female + 
+         factor(peer_comp.female) + peer_prop.female +
+         fem_prop_int | group.female,
+       data = quant %>% filter(group.female == "Intervention"),
+       render.continuous = c(.="Median [Q1, Q3]"), overall = FALSE) %>%
+  t1flex() %>%
+  save_as_docx("tab9fem", path = "tab9fem.docx")
+
+table1(~ factor(skills_comp.male) + skills_prop.male + 
+         factor(peer_comp.male) + peer_prop.male +
+         m_prop_int | group.female,
+       data = quant %>% filter(group.female == "Intervention"),
+       render.continuous = c(.="Median [Q1, Q3]"), overall = FALSE) %>%
+  t1flex() %>%
+  save_as_docx("tab9m", path = "tab9m.docx")
+```
+
+# Figure 16
+
+```{r sankey, fig.width=10, fig.height=12}
+# first need to pull in relevant data on session attendance by individual participants
+Load(sank)
+
+# get sex from codigo and only include folks in aim3
+sank <- sank %>%
+  mutate(sex = substr(codigo, 4, 4)) %>%
+  filter(codigo %in% quant$codigo.female | codigo %in% quant$codigo.male)
+
+# female counseling and skills
+fcs <- sank %>%
+  filter(sex == "F") %>%
+  select(fem1:fem6) %>%
+  rowid_to_column("ID") %>%
+  mutate(sum = sum(fem1, fem2, fem3, fem4, fem5, fem6, na.rm = TRUE),
+         Attendance = factor(sum, levels = c("0", "1", "2", "3", "4", "5", "6"))) %>%
+  gather(., "key", "value", fem1:fem6) %>%
+  mutate(label = ifelse(value == 0, "No", NA),
+         label = ifelse(value == 1, "Yes", label),
+         label = ifelse(is.na(value), "Missing", label),
+         label = factor(label, levels = c("Yes", "No", "Missing")))
+
+# female peer sessions
+fp <- sank %>%
+  filter(sex == "F") %>%
+  select(fem1p:fem9p) %>%
+  rowid_to_column("ID") %>%
+  mutate(sum = sum(fem1p, fem2p, fem3p, fem4p, fem5p, fem6p, fem7p, fem8p, fem9p, na.rm = TRUE),
+         Attendance = factor(sum, levels = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"))) %>%
+  gather(., "key", "value", fem1p:fem9p) %>%
+  mutate(label = ifelse(value == 0, "No", NA),
+         label = ifelse(value == 1, "Yes", label),
+         label = ifelse(is.na(value), "Missing", label),
+         label = factor(label, levels = c("Yes", "No", "Missing")))
+
+# male counseling and skills
+mcs <- sank %>%
+  filter(sex == "M") %>%
+  select(m1:m6) %>%
+  rowid_to_column("ID") %>%
+  mutate(sum = sum(m1, m2, m3, m4, m5, m6, na.rm = TRUE),
+         Attendance = factor(sum, levels = c("0", "1", "2", "3", "4", "5", "6"))) %>%
+  gather(., "key", "value", m1:m6) %>%
+  mutate(label = ifelse(value == 0, "No", NA),
+         label = ifelse(value == 1, "Yes", label),
+         label = ifelse(is.na(value), "Missing", label),
+         label = factor(label, levels = c("Yes", "No", "Missing")))
+
+# male peer sessions
+mp <- sank %>%
+  filter(sex == "M") %>%
+  select(m1p:m9p) %>%
+  rowid_to_column("ID") %>%
+  mutate(sum = sum(m1p, m2p, m3p, m4p, m5p, m6p, m7p, m8p, m9p, na.rm = TRUE),
+         Attendance = factor(sum, levels = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"))) %>%
+  gather(., "key", "value", m1p:m9p) %>%
+  mutate(label = ifelse(value == 0, "No", NA),
+         label = ifelse(value == 1, "Yes", label),
+         label = ifelse(is.na(value), "Missing", label),
+         label = factor(label, levels = c("Yes", "No", "Missing")))
+
+# now make alluvial plots
+alluvial <- function(data, title, xlab){
+  ggplot(data, aes(x = key, stratum = value, alluvium = ID,
+                fill = Attendance, label = label)) + 
+  geom_alluvium() +
+  geom_stratum(color = "black", fill = "grey90", width = 0.1) +
+  geom_label(stat = "stratum", fill = "mistyrose", size = 2.5) +
+  scale_fill_viridis_d(option = "plasma", direction = -1,
+                       name = "Session Attendance") +
+  ylab("HoPS+ Participants") +
+  ggtitle(title) +
+  scale_x_discrete(name = "Sessions",
+                     labels = xlab) +
+  theme_pubr() +
+  guides(fill = guide_legend(nrow = 2)) +
+  theme(text = element_text(family = "Arial"),
+        legend.position = "bottom",
+        plot.title = element_text(face = "bold"))
+}
+
+# females
+fig16a <- alluvial(fcs, "\na1. Counseling and Skills Sessions", seq(1:6))
+fig16b <- alluvial(fp, "\na2. Peer Sessions Sessions", seq(1:9))
+
+#males
+fig16c <- alluvial(mcs, "\nb1. Counseling and Skills Sessions", seq(1:6))
+fig16d <- alluvial(mp, "\nb2. Peer Sessions Sessions", seq(1:9))
+
+# cs panel
+panelcs <- ggarrange(fig16a, fig16c, ncol = 1, common.legend = TRUE, legend = "bottom",
+                     labels = c("a. Female Participants",
+                                "b. Male Participants"),
+                     hjust = -0.1)
+panelp <- ggarrange(fig16b, fig16d, ncol = 1, common.legend = TRUE, legend = "bottom")
+
+# now combine
+ggarrange(panelcs, panelp, nrow = 1, widths = c(6, 9))
+#ggsave("alluvial.pdf", width = 10, height = 12)
+#embed_fonts("alluvial.pdf")
+```
+
+
+```{r exp_hist, fig.width=12, fig.height=8}
+# "#f93800", "#64395f"
+
+# create exposure histograms for figure 16
+
+# first create dataframes
+skills_df <- quant %>%
+  select(skills_comp.female, skills_comp.male) %>%
+  gather(key = "type", value = "attendance") %>%
+  mutate(sex = ifelse(str_detect(type, ".female"), "Female", "Male"),
+         sex = factor(sex, levels = c("Female", "Male")))
+
+peer_df <- quant %>%
+  select(peer_comp.female, peer_comp.male) %>%
+  gather(key = "type", value = "attendance") %>%
+  mutate(sex = ifelse(str_detect(type, ".female"), "Female", "Male"),
+         sex = factor(sex, levels = c("Female", "Male")))
+
+# now create histograms
+skills_hist <- ggplot(skills_df, aes(x = attendance, fill = sex)) +
+  geom_bar(aes(y = ..count..), position = "dodge") +
+  scale_x_continuous(name = "Session Attendance", breaks = c(0:6)) +
+  scale_y_continuous(name = "", limits = c(0, 251)) +
+  scale_fill_manual(values = c("#f93800", "#64395f"),
+                      guide_legend(title = "")) +
+  ggtitle("Counseling & Skills Sessions") +
+  coord_flip() +
+  theme_pubr() +
+  theme(text = element_text(family = "Arial"),
+        legend.position = "bottom",
+        plot.title = element_text(face = "bold"))
+
+peer_hist <- ggplot(peer_df, aes(x = attendance, fill = sex)) +
+  geom_bar(aes(y = ..count..), position = "dodge") +
+  scale_x_continuous(name = "", breaks = c(0:9)) +
+  scale_y_continuous(name = "", limits = c(0, 151)) +
+  scale_fill_manual(values = c("#f93800", "#64395f"),
+                      guide_legend(title = "")) +
+  ggtitle("Peer Support Sessions") +
+  coord_flip() +
+  theme_pubr() +
+  theme(text = element_text(family = "Arial"),
+        legend.position = "bottom",
+        plot.title = element_text(face = "bold"))
+
+ggarrange(skills_hist, peer_hist, common.legend = TRUE, legend = "bottom")
+# ggsave("fig16.pdf", width = 12, height = 8)
+# embed_fonts("fig16.pdf")
+```
+# Imputations
+
+```{r imp, eval = FALSE, fig.width=10, fig.height=10}
+# create predictor matrix
+predmat <- make.predictorMatrix(aim3)
+
+# now edit predictor matrix, from "mice" documentation
+# "Each row corresponds to a variable block, i.e., a set of variables to be imputed. 
+# A value of 1 means that the column variable is used as a predictor for the target block (in the rows)."
+# my understanding is that the column then denotes whether that variable will be used to predict the row variable
+
+# first make clinic the cluster variable for all predictions (except it's own)
+# only need to do it in the column because it is not missing in the rows
+predmat[, "clinic.female"] <- -2
+predmat["clinic.female", "clinic.female"] <- 0
+
+# first remove covid-sens from the analysis (since we don't want it to predict anything)
+# we also don't want Y_raw or Y_wc to predict anything
+predmat[c("Y_lc", "Y_raw", "Y_wc", "covid_sens"),] <- 0
+predmat[,c("Y_lc", "Y_raw", "Y_wc", "covid_sens")] <- 0
+
+
+# finally create a matrix of variables not to impute (by setting is.na to FALSE)
+wheremat_int <- is.na(aim3)
+wheremat_int[,c("Y_raw", "Y_wc", "Y_lc", "covid_sens")] <- FALSE
+
+# finally have to remove some categories from factors...
+## DO THIS BASED ON WHAT DOES NOT WORK BELOW ##
+aim3_int <- aim3 %>%
+  mutate(district.female = droplevels(district.female))
+
+# 25 imputations
+int_imp <- mice(aim3_int, m = 25,
+                predictorMatrix = predmat,
+                defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
+                where = wheremat_int,
+                seed = 1111)
+
+# now save for future analyses
+imp_aim3_int <- int_imp
+Save(imp_aim3_int)
+
+# now check some diagnostics
+# stripplots to check distributions of imputed data
+stripplot(imp_aim3_int)
+
+# bwplots to re-check distributions of imputed data
+bwplot(imp_aim3_int)
+```
+
+# Assess Covariate Balance
+
+```{r covbal, fig.width=10, fig.height=10}
+# pull in imputations
+Load(imp_aim3_int)
+
+# first need to make clinic.female a factor in all iterations
+long <- complete(imp_aim3_int, action = "long", include = TRUE)
+long$clinic.female <- factor(long$clinic.female)
+# now make it back into a mids object
+imp_aim3 <- as.mids(long)
+
+# create model formula to assess female participation (just doing it for skills attendance for now, as do not have final)
+f_form <- formula(fem_prop_int ~ skills_prop.male + peer_prop.male + rcs(age.female, 4) + who_stage +
+                  edu_cat.female + edu_cat.male + rcs(day.female, 4) + rcs(phq9.female, 4) + clinic.female +
+                  rcs(soc_sup_ps.female, 4) + rcs(soc_sup_ns.female, 4))
+m_form <- formula(m_prop_int ~ skills_prop.female + peer_prop.female + rcs(age.male, 4) + who_stage.male +
+                  edu_cat.female + edu_cat.male + rcs(day.male, 4) + rcs(phq9.male, 4) + clinic.female + 
+                  rcs(soc_sup_ps.male, 4) + rcs(soc_sup_ns.male, 4))
+
+
+# Now assess weights across imputations
+f_w_ols <- weightthem(f_form, datasets = imp_aim3, approach = "within", method = "ps")
+f_w_cbps <- weightthem(f_form, datasets = imp_aim3, approach = "within", method = "cbps", over = FALSE)
+m_w_ols <- weightthem(m_form, datasets = imp_aim3, approach = "within", method = "ps")
+m_w_cbps <- weightthem(m_form, datasets = imp_aim3, approach = "within", method = "cbps", over = FALSE)
+
+# create orm weights
+orm.wt <- function(formula, imp_object, colname){
+  
+  
+  # start by creating a list of models
+  mods <- complete(imp_object, "all") %>%
+    map(~ orm(formula, data = .x))
+  # now create a list of dataframes of predicted probabilities for each model
+  pp <- mods %>%
+    map(~ as_tibble(predict(.x, type = "fitted.ind")))
+  # now need to calculate numerator (should be the same across all imputed datasets)
+  # first make list of exposures across datasets, should all be the same 
+  exp <- complete(imp_object, "all") %>%
+    map(~ .x[[colname]])
+  # now calculate numerator
+  nums <- exp %>%
+    map(~ orm.num(.x))
+  # now calculate the denominator (should be different across all imputed datasets)
+  denoms <- map2(pp, exp, ~ orm.denom(df = .x, vec = .y, colname = colname))
+  # now calculate weights
+  orm_wts <- map2(nums, denoms, ~ .x / .y)
+  orm_wts
+}
+
+# function to calculate the numerator for orm
+orm.num <- function(vec) {
+  num <- rep(NA, length(vec))
+  for(i in 1:length(vec)){
+    num[i] <- sum(vec == vec[i]) / sum(!is.na(vec))
+  }
+  num
+}
+
+# function to calculate the denominator for orm
+orm.denom <- function(df, vec, colname) {
+  if(nrow(df) != length(vec)) {
+    stop("Predicted Probabilities and Exposure Vector Different Lengths")
+    }
+  
+  denom <- rep(NA, nrow(df))
+  for(i in 1:nrow(df)){
+    denom[i] <- as.numeric(df[i, paste0(colname, "=", vec[i])])
+  }
+  denom
+}
+
+# create orm weights
+f_w_orm <- orm.wt(f_form, imp_aim3, "fem_prop_int")
+m_w_orm <- orm.wt(m_form, imp_aim3, "m_prop_int")
+
+# Make female and male plot side by side
+# make theme for tables
+tt_theme <- ttheme_minimal(base_family = "Arial",
+                           base_size = 10,
+                           core = list(fg_params = list(hjust = 0, x = 0.1)),
+                           colhead = list(fg_params = list(hjust = 0, x = 0.1)))
+
+# female
+# first make table
+fem_bal_tab <- bal.tab(f_form, data = imp_aim3, 
+        weights = list(OLS = get.w(f_w_ols),
+                       CBPS = get.w(f_w_cbps),
+                       ORM = unname(unlist(f_w_orm))), 
+        stats = c("c"), 
+        un = TRUE, thresholds = c(cor = .1))
+bal_fem <- round(fem_bal_tab$Observations, 2) %>%
+  rename("Effective N" = Total) %>%
+  rownames_to_column(var = "Sample")
+bal_fem[1, 1] <- "Unadjusted"
+# get list of mean number of balanced covariates
+bal_fem_cor <- tibble(OLS = rep(NA, 25),
+                      CBPS = rep(NA, 25),
+                      ORM = rep(NA, 25))
+for(i in 1:25) {
+    bal_fem_cor[i, ] <- fem_bal_tab$Imputation.Balance[[i]]$Balanced.correlations[2, ]
+}
+
+# add to bal_fem
+bal_fem <- bal_fem %>%
+  mutate(`Mean > 0.1` = c("",
+                                  mean(round(bal_fem_cor$OLS, 2)),
+                                  mean(round(bal_fem_cor$CBPS, 2)),
+                                  mean(round(bal_fem_cor$ORM, 2)))) %>%
+  select(Sample, `Mean > 0.1`, `Effective N`)
+
+# make into grob
+fem_tab <- tableGrob(bal_fem, theme = tt_theme, rows = NULL)
+fem_tab <- gtable_add_grob(fem_tab,
+                           grobs = rectGrob(gp = gpar(fill= NA, lwd = 2)),
+                           t = 1, b = nrow(fem_tab), l = 1, r = ncol(fem_tab))
+
+# now make plot
+fem_love <- love.plot(f_form, data = imp_aim3, 
+        weights = list(OLS = get.w(f_w_ols),
+                       CBPS = get.w(f_w_cbps),
+                       ORM = unname(unlist(f_w_orm))),
+          stats = c("c"), thresholds = c(cor = .1), 
+          abs = TRUE, line = TRUE) +
+  annotation_custom(fem_tab,
+                    xmin = 0.15, ymin = 28, ymax = 33) +
+  labs(title = "a. Female Intervention Participation",
+       subtitle = "Covariate balance across imputations") +
+  theme(text = element_text(family = "Arial"),
+        plot.title = element_text(hjust = 0),
+        plot.subtitle = element_text(hjust = 0))
+# male
+# first make table
+m_bal_tab <- bal.tab(m_form, data = imp_aim3, 
+        weights = list(OLS = get.w(m_w_ols),
+                       CBPS = get.w(m_w_cbps),
+                       ORM = unname(unlist(m_w_orm))), 
+        stats = c("c"), 
+        un = TRUE, thresholds = c(cor = .1))
+bal_male <- round(m_bal_tab$Observations, 2) %>%
+  rename("Effective N" = Total) %>%
+  rownames_to_column(var = "Sample")
+bal_male[1, 1] <- "Unadjusted"
+# get list of mean number of balanced covariates
+bal_m_cor <- tibble(OLS = rep(NA, 25),
+                      CBPS = rep(NA, 25),
+                      ORM = rep(NA, 25))
+for(i in 1:25) {
+    bal_m_cor[i, ] <- m_bal_tab$Imputation.Balance[[i]]$Balanced.correlations[2, ]
+}
+
+# add to bal_fem
+bal_male <- bal_male %>%
+  mutate(`Mean > 0.1` = c("",
+                                  mean(round(bal_m_cor$OLS, 2)),
+                                  mean(round(bal_m_cor$CBPS, 2)),
+                                  mean(round(bal_m_cor$ORM, 2)))) %>%
+  select(Sample, `Mean > 0.1`, `Effective N`)
+
+# make itno grob
+male_tab <- tableGrob(bal_male, theme = tt_theme, rows = NULL)
+male_tab <- gtable_add_grob(male_tab,
+                           grobs = rectGrob(gp = gpar(fill= NA, lwd = 2)),
+                           t = 1, b = nrow(male_tab), l = 1, r = ncol(male_tab))
+
+# now make plot
+male_love <- love.plot(m_form, data = imp_aim3, 
+        weights = list(OLS = get.w(m_w_ols),
+                       CBPS = get.w(m_w_cbps),
+                       ORM = unname(unlist(m_w_orm))),
+          stats = c("c"), thresholds = c(cor = .1), 
+          abs = TRUE, line = TRUE) +
+  annotation_custom(male_tab,
+                    xmin = 0.15, ymin = 22, ymax = 28) +
+  labs(title = "b. Male Intervention Participation",
+       subtitle = "Covariate balance across imputations") +
+  theme(text = element_text(family = "Arial"),
+        axis.text.y = element_blank(),
+        plot.title = element_text(hjust = 0),
+        plot.subtitle = element_text(hjust = 0))
+# combine
+ggarrange(fem_love, male_love, nrow = 1,
+          widths = c(1, 0.5),
+          common.legend = TRUE,
+          legend = "bottom")
+ggsave("fig17.pdf", width = 15, height = 10)
+embed_fonts("fig17.pdf")
+```
+
+# Primary Analyses
+
+```{r primana}
+# females
+
+# cbps
+f_prim_mod_cbps_wt <- with(f_w_cbps, 
+                        glmer(Y_imp ~ skills_comp.female + peer_comp.female + m_prop_int + (1 | clinic.female),
+                     family = binomial))
+# pool and summarize
+f_prim_cbps <- f_prim_mod_cbps_wt %>%
+  pool() %>%
+  summary()
+f_prim_cbps
+
+# males
+
+# cbps
+m_prim_mod_cbps_wt <- with(m_w_cbps, 
+                        glmer(Y_imp ~ skills_comp.male + peer_comp.male + fem_prop_int + (1 | clinic.female),
+                     family = binomial))
+
+# pool and summarize
+m_prim_cbps <- m_prim_mod_cbps_wt %>%
+  pool() %>%
+  summary()
+m_prim_cbps
+```
+
+# Likely Case Analysis
+
+```{r lcana}
+# females
+
+# cbps
+f_lc_mod_cbps_wt <- with(f_w_cbps, 
+                        glmer(Y_lc ~ skills_comp.female + peer_comp.female + m_prop_int + (1 | clinic.female),
+                     family = binomial))
+# pool and summarize
+f_lc_cbps <- f_lc_mod_cbps_wt %>%
+  pool() %>%
+  summary()
+f_lc_cbps
+
+# males
+
+# orm
+m_lc_mod_cbps_wt <- with(m_w_cbps, 
+                        glmer(Y_lc ~ skills_comp.male + peer_comp.male + fem_prop_int + (1 | clinic.female),
+                     family = binomial))
+
+# pool and summarize
+m_lc_cbps <- m_lc_mod_cbps_wt %>%
+  pool() %>%
+  summary()
+m_lc_cbps
+```
+
+# Additional Covariate Sensitivty Analysis
+
+```{r covbal_sens, fig.width=10, fig.height=12}
+# create models with updated covariates
+f_form_sens <- formula(fem_prop_int ~ skills_prop.male + peer_prop.male + rcs(age.female, 4) + 
+                  edu_cat.female + edu_cat.male + rcs(day.female, 4) + clinic.female +
+                  rcs(phq9.female, 4) + rcs(phq9.male, 4) + who_stage +
+                  rcs(soc_sup_ps.female, 4) + rcs(soc_sup_ns.female, 4) + rcs(soc_sup_ps.male, 4) + rcs(soc_sup_ns.male, 4) +
+                  rcs(stigma_com.female, 4) + rcs(stigma_pt.female, 4) + rcs(stigma_com.male, 4) + rcs(stigma_pt.male, 4) + 
+                  rcs(trust.female, 4) + rcs(hivk.female, 4) + rcs(trust.male, 4) + rcs(hivk.male, 4) + 
+                  rcs(cog_emp.female, 4) + rcs(aff_emp.female, 4) + rcs(cog_emp.male, 4) + rcs(aff_emp.male, 4))
+m_form_sens <- formula(m_prop_int ~ skills_prop.female + peer_prop.female + rcs(age.male, 4) + 
+                  edu_cat.female + edu_cat.male + rcs(day.male, 4) +  clinic.female +
+                  rcs(phq9.female, 4) + rcs(phq9.male, 4) + who_stage.male +
+                  rcs(soc_sup_ps.female, 4) + rcs(soc_sup_ns.female, 4) + rcs(soc_sup_ps.male, 4) + rcs(soc_sup_ns.male, 4) +
+                  rcs(stigma_com.female, 4) + rcs(stigma_pt.female, 4) + rcs(stigma_com.male, 4) + rcs(stigma_pt.male, 4) + 
+                  rcs(trust.female, 4) + rcs(hivk.female, 4) + rcs(trust.male, 4) + rcs(hivk.male, 4) + 
+                  rcs(cog_emp.female, 4) + rcs(aff_emp.female, 4) + rcs(cog_emp.male, 4) + rcs(aff_emp.male, 4))
+
+
+# Now assess weights across imputations
+f_w_ols_sens <- weightthem(f_form_sens, datasets = imp_aim3, approach = "within", method = "ps")
+f_w_cbps_sens <- weightthem(f_form_sens, datasets = imp_aim3, approach = "within", method = "cbps", over = FALSE)
+m_w_ols_sens <- weightthem(m_form_sens, datasets = imp_aim3, approach = "within", method = "ps")
+m_w_cbps_sens <- weightthem(m_form_sens, datasets = imp_aim3, approach = "within", method = "cbps", over = FALSE)
+
+# create orm weights
+f_w_orm_sens <- orm.wt(f_form_sens, imp_aim3, "fem_prop_int")
+m_w_orm_sens <- orm.wt(m_form_sens, imp_aim3, "m_prop_int")
+
+# Make female and male plot side by side
+
+# female
+# first make table
+fem_bal_tab_sens <- bal.tab(f_form_sens, data = imp_aim3, 
+        weights = list(OLS = get.w(f_w_ols_sens),
+                       CBPS = get.w(f_w_cbps_sens),
+                       ORM = unname(unlist(f_w_orm_sens))), 
+        stats = c("c"), 
+        un = TRUE, thresholds = c(cor = .1))
+bal_fem_sens <- round(fem_bal_tab_sens$Observations, 2) %>%
+  rename("Effective N" = Total) %>%
+  rownames_to_column(var = "Sample")
+bal_fem_sens[1, 1] <- "Unadjusted"
+# get list of mean number of balanced covariates
+bal_fem_cor_sens <- tibble(OLS = rep(NA, 25),
+                      CBPS = rep(NA, 25),
+                      ORM = rep(NA, 25))
+for(i in 1:25) {
+    bal_fem_cor_sens[i, ] <- fem_bal_tab_sens$Imputation.Balance[[i]]$Balanced.correlations[2, ]
+}
+
+# add to bal_fem
+bal_fem_sens <- bal_fem_sens %>%
+  mutate(`Mean > 0.1` = c("",
+                                  mean(round(bal_fem_cor_sens$OLS, 2)),
+                                  mean(round(bal_fem_cor_sens$CBPS, 2)),
+                                  mean(round(bal_fem_cor_sens$ORM, 2)))) %>%
+  select(Sample, `Mean > 0.1`, `Effective N`)
+
+# make into grob
+fem_tab_sens <- tableGrob(bal_fem_sens, theme = tt_theme, rows = NULL)
+fem_tab_sens <- gtable_add_grob(fem_tab_sens,
+                           grobs = rectGrob(gp = gpar(fill= NA, lwd = 2)),
+                           t = 1, b = nrow(fem_tab_sens), l = 1, r = ncol(fem_tab_sens))
+
+# now make plot
+fem_love_sens <- love.plot(f_form_sens, data = imp_aim3, 
+        weights = list(OLS = get.w(f_w_ols_sens),
+                       CBPS = get.w(f_w_cbps_sens),
+                       ORM = unname(unlist(f_w_orm_sens))),
+          stats = c("c"), thresholds = c(cor = .1), 
+          abs = TRUE, line = TRUE) +
+  annotation_custom(fem_tab_sens,
+                    xmin = 0.25, ymin = 10, ymax = 15) +
+  labs(title = "a. Female Intervention Participation",
+       subtitle = "Covariate balance across imputations") +
+  theme(text = element_text(family = "Arial"),
+        plot.title = element_text(hjust = 0),
+        plot.subtitle = element_text(hjust = 0))
+# male
+# first make table
+m_bal_tab_sens <- bal.tab(m_form_sens, data = imp_aim3, 
+        weights = list(OLS = get.w(m_w_ols_sens),
+                       CBPS = get.w(m_w_cbps_sens),
+                       ORM = unname(unlist(m_w_orm_sens))), 
+        stats = c("c"), 
+        un = TRUE, thresholds = c(cor = .1))
+bal_male_sens <- round(m_bal_tab_sens$Observations, 2) %>%
+  rename("Effective N" = Total) %>%
+  rownames_to_column(var = "Sample")
+bal_male_sens[1, 1] <- "Unadjusted"
+# get list of mean number of balanced covariates
+bal_male_cor_sens <- tibble(OLS = rep(NA, 25),
+                      CBPS = rep(NA, 25),
+                      ORM = rep(NA, 25))
+for(i in 1:25) {
+    bal_male_cor_sens[i, ] <- m_bal_tab_sens$Imputation.Balance[[i]]$Balanced.correlations[2, ]
+}
+
+# add to bal_male
+bal_male_sens <- bal_male_sens %>%
+  mutate(`Mean > 0.1` = c("",
+                                  mean(round(bal_male_cor_sens$OLS, 2)),
+                                  mean(round(bal_male_cor_sens$CBPS, 2)),
+                                  mean(round(bal_male_cor_sens$ORM, 2)))) %>%
+  select(Sample, `Mean > 0.1`, `Effective N`)
+
+# make into grob
+male_tab_sens <- tableGrob(bal_male_sens, theme = tt_theme, rows = NULL)
+male_tab_sens <- gtable_add_grob(male_tab_sens,
+                           grobs = rectGrob(gp = gpar(fill= NA, lwd = 2)),
+                           t = 1, b = nrow(male_tab_sens), l = 1, r = ncol(male_tab_sens))
+
+# now make plot
+male_love_sens <- love.plot(m_form_sens, data = imp_aim3, 
+        weights = list(OLS = get.w(m_w_ols_sens),
+                       CBPS = get.w(m_w_cbps_sens),
+                       ORM = unname(unlist(m_w_orm_sens))),
+          stats = c("c"), thresholds = c(cor = .1), 
+          abs = TRUE, line = TRUE) +
+  annotation_custom(male_tab_sens,
+                    xmin = 0.29, ymin = 25, ymax = 30) +
+  labs(title = "b. Male Intervention Participation",
+       subtitle = "Covariate balance across imputations") +
+  theme(text = element_text(family = "Arial"),
+        axis.text.y = element_blank(),
+        plot.title = element_text(hjust = 0),
+        plot.subtitle = element_text(hjust = 0))
+# combine
+ggarrange(fem_love_sens, male_love_sens, nrow = 1,
+          widths = c(1, 0.6),
+          common.legend = TRUE,
+          legend = "bottom")
+ggsave("fig19.pdf", width = 15, height = 10)
+embed_fonts("fig19.pdf")
+```
+
+```{r ps_sens_mod}
+# use cbps for females and orm for males
+f_cbps_sens <- with(f_w_cbps_sens, 
+                        glmer(Y_imp ~ skills_comp.female + peer_comp.female + m_prop_int + (1 | clinic.female),
+                     family = binomial)) %>%
+  pool() %>%
+  summary()
+m_cbps_sens <- with(m_w_cbps_sens, 
+                        glmer(Y_imp ~ skills_comp.male + peer_comp.male + fem_prop_int + (1 | clinic.female),
+                     family = binomial)) %>%
+  pool() %>%
+  summary()
+
+# now make a little table with all three (table 10)
+## note that in primary analysis, males use orm, while in all others, cbps is used
+
+# start with sensitivity tibble
+sens_tib <- tibble(Analysis = c("+1 Counseling & Skills Session", # female
+                            "+1 Peer Session", # female
+                            "+1 Counseling & Skills Session", # male
+                            "+1 Peer Session"), # male
+                   Sex = c(rep("Female", 2),
+                           rep("Male", 2)),
+               coef = c(f_cbps_sens$estimate[2],
+                           f_cbps_sens$estimate[3],
+                           m_cbps_sens$estimate[2],
+                           m_cbps_sens$estimate[3]),
+                  se = c(f_cbps_sens$std.error[2],
+                           f_cbps_sens$std.error[3],
+                           m_cbps_sens$std.error[2],
+                           m_cbps_sens$std.error[3])) %>%
+  mutate(lb = coef - (1.96*se),
+         ub = coef + (1.96*se),
+         or = exp(coef),
+         or_lb = exp(lb),
+         or_ub = exp(ub),
+         `Odds Ratio (95% Confidence Interval).sens` = paste0(round(or, 2), " (", round(or_lb, 3), ", ", round(or_ub, 3), ")"))
+```
+
+# Figure 18
+
+```{r fig18, fig.width=12, fig.height=5}
+# first extract coefficients and standard errors from f_prim_cbps and m_prim_orm
+# need to figure out what to do about the interaction terms later...
+
+# create tibble (need to update names)
+prim_fig18 <- tibble(Analysis = c("+1 Counseling & Skills Session", # female
+                            "+1 Peer Session", # female
+                            "+1 Counseling & Skills Session", # male
+                            "+1 Peer Session"), # male
+                     Sex = c(rep("Female", 2),
+                           rep("Male", 2)),
+               coef = c(f_prim_cbps$estimate[2],
+                           f_prim_cbps$estimate[3],
+                           m_prim_cbps$estimate[2],
+                           m_prim_cbps$estimate[3]),
+                  se = c(f_prim_cbps$std.error[2],
+                           f_prim_cbps$std.error[3],
+                           m_prim_cbps$std.error[2],
+                           m_prim_cbps$std.error[3])) %>%
+  mutate(lb = coef - (1.96*se),
+         ub = coef + (1.96*se),
+         or = exp(coef),
+         or_lb = exp(lb),
+         or_ub = exp(ub),
+         `Odds Ratio (95% Confidence Interval)` = paste0(round(or, 2), " (", round(or_lb, 3), ", ", round(or_ub, 3), ")"))
+
+lc_fig18 <- tibble(Analysis = c("+1 Counseling & Skills Session", # female
+                            "+1 Peer Session", # female
+                            "+1 Counseling & Skills Session", # male
+                            "+1 Peer Session"), # male
+                   Sex = c(rep("Female", 2),
+                           rep("Male", 2)),
+               coef = c(f_lc_cbps$estimate[2],
+                           f_lc_cbps$estimate[3],
+                           m_lc_cbps$estimate[2],
+                           m_lc_cbps$estimate[3]),
+                  se = c(f_lc_cbps$std.error[2],
+                           f_lc_cbps$std.error[3],
+                           m_lc_cbps$std.error[2],
+                           m_lc_cbps$std.error[3])) %>%
+  mutate(lb = coef - (1.96*se),
+         ub = coef + (1.96*se),
+         or = exp(coef),
+         or_lb = exp(lb),
+         or_ub = exp(ub),
+         `Odds Ratio (95% Confidence Interval)` = paste0(round(or, 2), " (", round(or_lb, 3), ", ", round(or_ub, 3), ")"))
+
+# now make a forestplot
+tabletext <- cbind(c("", "Female Participant*", prim_fig18$Analysis[1:2], "Male Participant*", prim_fig18$Analysis[3:4]), 
+                   c("Odds Ratio (95% CI)", "Primary Analysis", prim_fig18$`Odds Ratio (95% Confidence Interval)`[1:2], "", prim_fig18$`Odds Ratio (95% Confidence Interval)`[3:4]),
+                   c("", "Likely Case", lc_fig18$`Odds Ratio (95% Confidence Interval)`[1:2], "", lc_fig18$`Odds Ratio (95% Confidence Interval)`[3:4]),
+                   c("", "Sensitivity Analysis", sens_tib$`Odds Ratio (95% Confidence Interval).sens`[1:2], "", sens_tib$`Odds Ratio (95% Confidence Interval).sens`[3:4]))
+#pdf("fig18.pdf", height = 5, width = 12)
+forestplot(tabletext,
+           mean = cbind(c(NA, NA, prim_fig18$or[1:2], NA, prim_fig18$or[3:4]),
+                        c(NA, NA, lc_fig18$or[1:2], NA, lc_fig18$or[3:4]),
+                        c(NA, NA, sens_tib$or[1:2], NA, sens_tib$or[3:4])),
+           lower = cbind(c(NA, NA, prim_fig18$or_lb[1:2], NA, prim_fig18$or_lb[3:4]),
+                         c(NA, NA, lc_fig18$or_lb[1:2], NA, lc_fig18$or_lb[3:4]),
+                         c(NA, NA, sens_tib$or_lb[1:2], NA, sens_tib$or_lb[3:4])),
+           upper = cbind(c(NA, NA, prim_fig18$or_ub[1:2], NA, prim_fig18$or_ub[3:4]),
+                         c(NA, NA, lc_fig18$or_ub[1:2], NA, lc_fig18$or_ub[3:4]),
+                         c(NA, NA, sens_tib$or_ub[1:2], NA, sens_tib$or_ub[3:4])),
+           is.summary = c(rep(TRUE, 2), rep(FALSE, 2),
+                          TRUE, rep(FALSE, 2)),
+           xlog = TRUE,
+           xlab = "Propensity Score Weighted Odds Ratio",
+           boxsize = 0.15,
+           col = fpColors(box = c("#f93800", "#64395f", "#000000"),
+                          line = c("#f93800", "#64395f", "#000000")),
+           align = "l",
+           legend = c("Primary", "Likely Case", "Sensitivity Analysis"),
+           legend_args = fpLegend(pos = list(x = 0.85, y = 0.8)),
+           vertices = TRUE,
+           vertices.height = 0.05,
+           txt_gp = fpTxtGp(cex=0.9, 
+                            label=gpar(fontfamily="Arial", cex = 0.8), 
+                            ticks=gpar(cex=0.75),
+                            xlab=gpar(cex=0.9)))
+#dev.off()
+# embed the font
+#embed_fonts("fig18.pdf")
+# * using cbps weighting
+```
+
+```{r sens_tab}
+prim_tib <- prim_fig18 %>% 
+  select(Sex, Analysis, `Odds Ratio (95% Confidence Interval)`)
+
+lc_tib <- lc_fig18 %>% 
+  select(Sex, Analysis, `Odds Ratio (95% Confidence Interval)`)
+
+sens_tib <- sens_tib  %>%
+  select(Sex, Analysis, `Odds Ratio (95% Confidence Interval).sens`)
+
+# now bind columns
+tab10 <- left_join(prim_tib, lc_tib,
+                   by = c("Sex", "Analysis"), suffix = c(".prim", ".lc")) %>%
+  left_join(., sens_tib, 
+            by = c("Sex", "Analysis"))
+flextable(tab10) %>%
+  save_as_docx("tab10", path = "tab10.docx")
+# did some post-R formatting in word to add analysis type and number of observations
+```
+
+# E-value Sensitivity Analysis
+
+```{r e_val}
+# calculate e-values for two primary analyses for unmeasured confounder
+e_vals <- tibble(Analysis = c("Fem.Skills",
+                              "Fem.Peer",
+                              "M.Skills",
+                              "M.Peer"),
+                 eval_est = c(NA),
+                 eval_lb = c(NA),
+                 eval_ub = c(NA))
+for(i in 1:nrow(prim_fig18)){
+  e_val <- evalues.OR(est = prim_fig18$or[i], low = prim_fig18$or_lb[i], hi = prim_fig18$or_ub[i],
+                             rare = FALSE, true = 1)
+  e_vals$eval_est[i] <- e_val[2, 1]
+  e_vals$eval_lb[i] <- e_val[2, 2]
+  e_vals$eval_ub[i] <- e_val[2, 3]
+}
+
+# export
+flextable(e_vals) %>%
+  save_as_docx("e_val", path = "e_val.docx")
+
+# plot (update manually with lower bound of CI)
+bias_plot(1.088, 10)
+```

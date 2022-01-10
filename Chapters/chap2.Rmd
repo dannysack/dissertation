@@ -1,0 +1,480 @@
+---
+title: "Chapter 2: Study Design"
+author: "Danny Sack<br><small>Division of Epidemiology<br>Vanderbilt University School of Medicine</small>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    lightbox: true
+    code_download: true
+description: "HoPS+ Baseline Data"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(Hmisc)
+library(table1)
+library(flextable)
+library(extrafont)
+library(ggpubr)
+library(sf)
+library(pwr)
+library(clusterPower)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+loadfonts()
+knitrSet(lang='markdown', fig.path='png/', fig.align='center', w=6, h=4, cache=TRUE)
+options(prType='html')
+set.seed(1111)
+
+# load cleaned data
+options(LoadPath = "../Data/")
+Load(final)
+
+# set ggplot output theme text
+```
+
+# Figure 1: Clinic Map
+
+```{r fig1, fig.width=6, fig.height=6}
+# read in coordinates file
+coords <- read_csv("./coords.csv") %>%
+  mutate(Group = factor(Group, levels = c("Control", "Intervention")))
+
+# https://data.humdata.org/dataset/mozambique-administrative-levels-0-3
+moz <- st_read("./moz_adm_20190607_shp/moz_admbnda_adm2_ine_20190607.shp") %>%
+  filter(ADM1_PT == "Zambezia",
+         ADM2_PT %in% c("Pebane", "Inhassunge", "Gile", "Cidade De Quelimane",
+                        "Mocubela", "Namacurra", "Maganja Da Costa", 
+                        "Maquival"))
+
+# add in HIV prevalence, have to remove accents from relevant rows first...
+hiv <- read_csv("unaids.csv") %>% 
+	filter(States %in% moz$ADM2_PT)
+
+# merge
+moz <- left_join(moz, hiv, by = c("ADM2_PT" = "States"))
+
+# plot
+ggplot(moz) +
+  geom_sf(aes(fill = `2019`)) +
+  geom_point(data = coords, 
+             aes(x = long, y = lat, shape = Group, color = Group, size = Participants)) +
+  xlab("") + ylab("") +
+  # change depedning on desired color scheme
+  scale_color_manual(name = "HoPS+ Group",
+  						values = c("black", "black")) +
+  scale_shape(name = "HoPS+ Group") +
+  scale_fill_gradient(name = "Adult (15-49) HIV Prevalence 2019",
+  	low = "yellow", high = "red", na.value = NA) +
+  guides(shape = guide_legend(override.aes = list(size = 3)),
+         fill = guide_colourbar(reverse = TRUE)) +
+  theme_pubr() +
+  theme(text = element_text(face = "bold", family = "Arial"),
+        legend.position = c(0.20, 0.65),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        legend.background = element_rect(fill = "transparent", colour = NA))
+```
+
+# Figure 4: Aim 2 Power Calculation
+
+```{r fig4, fig.width=8, fig.height=5}
+# power calc, aim 2
+cpa.binary(alpha = 0.05, power = 0.8, nclusters = 12, nsubjects = 45, ICC = 0.07, p1 = 0.193, p2 = NA)
+
+# simulation based on use in control group (p2, 0.01 to 0.50 by 0.01) and power (70 to 90)
+p2 <- seq(0.01, 0.50, 0.01)
+power <- seq(0.70, 0.90, 0.05)
+
+# make these into a dataframe
+aim2 <- expand.grid(alpha = 0.05, power = power, p1 = NA, p2 = p2, OR = NA, diff = NA)
+
+for(i in 1:nrow(aim2)){
+  aim2$p1[i] <- cpa.binary(alpha = aim2$alpha[i], 
+                             power = aim2$power[i], 
+                             nclusters = 12, nsubjects = 45, ICC = 0.07, 
+                             p1 = NA, p2 = aim2$p2[i])
+  aim2$OR[i] <- (aim2$p1[i] / (1 - aim2$p1[i])) / (aim2$p2[i] / (1 - aim2$p2[i]))
+  aim2$diff[i] <- aim2$p1[i] - aim2$p2[i]
+}
+
+aim2$power <- as.factor(aim2$power)
+
+# now plot
+theme <- theme(panel.background = element_rect(fill = NA), 
+               legend.position = "bottom",
+               legend.key = element_rect(fill = NA, color = NA),
+               text = element_text(family = "Arial"), 
+               axis.line = element_line(), 
+               axis.text = element_text(color = "black"))
+
+# difference for part a
+difa <- ggplot(aim2) +
+  geom_vline(aes(xintercept = 0.191), alpha = 0.25) +
+  geom_line(aes(x = p2, y = diff, group = power, color = power)) + 
+  scale_color_manual(values = c("#9EBCDA", "#8C96C6", "#8C6BB1", "#88419D", "#6E016B")) +
+  xlab("Postpartum Modern Contraception\nUptake in HoPS+ Control Group") +
+  ylab("Detectable Difference in Postpartum\nModern Contraception Uptake") +
+  xlim(0, max(aim2$p2)) +
+  ylim(0, max(aim2$diff)) +
+  labs(linetype = "Power:", 
+       caption = "Grey vertical line represents preliminary modern postpartum\ncontraceptive uptake across both arms of the HoPS+ trial") +
+  theme
+
+# simulation based on use in control group (p2, 0.01 to 0.50 by 0.01) and power (70 to 90)
+p2b <- seq(0.10, 0.70, 0.01)
+
+# make these into a dataframe
+aim2b <- expand.grid(alpha = 0.05, power = power, p1 = NA, p2 = p2b, OR = NA, diff = NA)
+
+for(i in 1:nrow(aim2b)){
+  aim2b$p1[i] <- cpa.binary(alpha = aim2b$alpha[i], 
+                             power = aim2b$power[i], 
+                             nclusters = 12, nsubjects = 45, ICC = 0.07, 
+                             p1 = NA, p2 = aim2b$p2[i])
+  aim2b$OR[i] <- (aim2b$p1[i] / (1 - aim2b$p1[i])) / (aim2b$p2[i] / (1 - aim2b$p2[i]))
+  aim2b$diff[i] <- aim2b$p1[i] - aim2b$p2[i]
+}
+
+aim2b$power <- as.factor(aim2b$power)
+
+difb <- ggplot(aim2b) +
+  geom_vline(aes(xintercept = 0.45), alpha = 0.25) +
+  geom_line(aes(x = p2, y = diff, group = power, color = power)) + 
+  scale_color_manual(values = c("#9EBCDA", "#8C96C6", "#8C6BB1", "#88419D", "#6E016B")) +
+  xlab("Repeat Pregnancy in HoPS+ Control Group") +
+  ylab("Detectable Difference in Repeat Pregnancy") +
+  xlim(0, max(aim2b$p2)) +
+  ylim(0, max(aim2b$diff)) +
+  labs(linetype = "Power:", 
+       caption = "Grey vertical line represents expected repeat\npregnancy at 12 months from the literature") +
+  theme
+
+# combine into one plot
+ggarrange(difa, difb, nrow = 1,
+          labels = c("a", "b"),
+          font.label = list(color = "black", face = "bold", family = "Arial"),
+          common.legend = TRUE, legend = "bottom")
+```
+
+# Figure 5: Aim 2 COVID-19 Sensitivity Analysis
+
+```{r fig5, fig.width=8, fig.height=5}
+# make these into a dataframe
+aim2asens <- expand.grid(alpha = 0.05, power = power, p1 = NA, p2 = p2, OR = NA, diff = NA)
+aim2bsens <- expand.grid(alpha = 0.05, power = power, p1 = NA, p2 = p2b, OR = NA, diff = NA)
+
+for(i in 1:nrow(aim2asens)){
+  aim2asens$p1[i] <- cpa.binary(alpha = aim2asens$alpha[i], 
+                              power = aim2asens$power[i], 
+                              nclusters = 12, nsubjects = 26, ICC = 0.07,
+                              p1 = NA, p2 = aim2asens$p2[i])
+  aim2asens$OR[i] <- (aim2asens$p1[i] / (1 - aim2asens$p1[i])) / (aim2asens$p2[i] / (1 - aim2asens$p2[i]))
+  aim2asens$diff[i] <- aim2asens$p1[i] - aim2asens$p2[i]
+}
+
+for(i in 1:nrow(aim2bsens)){
+  aim2bsens$p1[i] <- cpa.binary(alpha = aim2bsens$alpha[i], 
+                              power = aim2bsens$power[i], 
+                              nclusters = 12, nsubjects = 26, ICC = 0.07,
+                              p1 = NA, p2 = aim2bsens$p2[i])
+  aim2bsens$OR[i] <- (aim2bsens$p1[i] / (1 - aim2bsens$p1[i])) / (aim2bsens$p2[i] / (1 - aim2bsens$p2[i]))
+  aim2bsens$diff[i] <- aim2bsens$p1[i] - aim2bsens$p2[i]
+}
+
+aim2asens$power <- as.factor(aim2asens$power)
+aim2bsens$power <- as.factor(aim2bsens$power)
+
+# plot 80% power in full vs 80% power in subset
+sensa <- subset(aim2, power == 0.8)
+sensac <- subset(aim2asens, power == 0.8)
+
+sensa$group <- "Full HoPS+"
+sensac$group <- "Pre-COVID"
+sensA <- rbind(sensa, sensac)
+
+difasens <- ggplot(sensA) +
+  geom_vline(aes(xintercept = 0.191), alpha = 0.25) +
+  geom_line(aes(x = p2, y = diff, color = group)) + 
+  scale_color_manual(name = "Dataset", values = c("#B10026", "#FD8D3C")) +
+  xlab("Postpartum Modern Contraception\nUptake in HoPS+ Control Group") +
+  ylab("Detectable Difference in Postpartum\nModern Contraception Uptake") +
+  xlim(0, max(aim2asens$p2)) +
+  ylim(0, max(aim2asens$diff)) +
+  labs(linetype = "Data:", 
+       caption = "Grey vertical line represents preliminary modern postpartum\ncontraceptive uptake across both arms of the HoPS+ trial") +
+  theme
+
+# plot 80% power in full vs 80% power in subset
+sensb <- subset(aim2b, power == 0.8)
+sensbc <- subset(aim2bsens, power == 0.8)
+
+sensb$group <- "Full HoPS+"
+sensbc$group <- "Pre-COVID"
+sensB <- rbind(sensb, sensbc)
+
+difbsens <- ggplot(sensB) +
+  geom_vline(aes(xintercept = 0.45), alpha = 0.25) +
+  geom_line(aes(x = p2, y = diff, color = group)) + 
+  scale_color_manual(name = "Dataset", values = c("#B10026", "#FD8D3C")) +
+  xlab("Repeat Pregnancy in HoPS+ Control Group") +
+  ylab("Detectable Difference in Repeat Pregnancy") +
+  xlim(0, max(aim2bsens$p2)) +
+  ylim(0, max(aim2bsens$diff)) +
+  labs(linetype = "Data:", 
+       caption = "Grey vertical line represents expected repeat\npregnancy at 12 months from the literature") +
+  theme
+
+# combine into one plot
+ggarrange(difasens, difbsens, nrow = 1,
+          labels = c("a", "b"),
+          font.label = list(color = "black", face = "bold", family = "Arial"),
+          common.legend = TRUE, legend = "bottom")
+```
+
+# Figure 6: Aim 3 Power Calculation
+```{r fig6, fig.width=6, fig.height=4}
+# power calc, aim 3
+n1 <- seq(35, 135, by = 1)
+
+d70 <- NULL
+d80 <- NULL
+d90 <- NULL
+for(i in 1:length(n1)){
+	d70[i] <- pwr.t2n.test(n1 = n1[i], n2 = (504-n1[i]), d = NULL, power = 0.7, alternative = "two.sided")$d
+	d80[i] <- pwr.t2n.test(n1 = n1[i], n2 = (504-n1[i]), d = NULL, power = 0.8, alternative = "two.sided")$d
+	d90[i] <- pwr.t2n.test(n1 = n1[i], n2 = (504-n1[i]), d = NULL, power = 0.9, alternative = "two.sided")$d
+
+}
+
+plot(n1 ~ d80, type = "l", col = "black", ylab = "modern contraceptive users", xlab = "standard deviation", xlim = c(0.20, 0.60))
+lines(n1 ~ d70, type = "l", col = "red")
+lines(n1 ~ d90, type = "l", col = "blue")
+
+data <- data.frame(n = n1, p70 = d70, p80 = d80, p90 = d90)
+# add segments with numbers
+
+ggplot(data) + 
+  geom_line(aes(x = d80, y = n), color = "#8C6BB1") +
+  geom_line(aes(x = d70, y = n), color = "#9EBCDA") +
+  geom_line(aes(x = d90, y = n), color = "#6E016B") +
+  ylab("Modern Contraceptive Users") + 
+  xlab("Dectectable Standard Deviation") + 
+  ylim(30, 140) + 
+  labs(caption = "n = Modern Postpartum Contraceptive Users \ns = Detectable Standard Deviation") +
+  geom_segment(aes(x = 0.22, y = n[24], xend = p80[24], yend = n[24]), linetype = 3, size = 0.1, color = "grey50") + 
+  geom_segment(aes(x = p80[24], y = 30, xend = p80[24], yend = n[24]), linetype = 3, size = 0.1, color = "grey50") + 
+  geom_segment(aes(x = 0.22, y = n[62], xend = p80[62], yend = n[62]), linetype = 3, size = 0.1, color = "grey50") + 
+  geom_segment(aes(x = p80[62], y = 30, xend = p80[62], yend = n[62]), linetype = 3, size = 0.1, color = "grey50") + 
+  geom_segment(aes(x = 0.22, y = n[100], xend = p80[100], yend = n[100]), linetype = 3, size = 0.1, color = "grey50") + 
+  geom_segment(aes(x = p80[100], y = 30, xend = p80[100], yend = n[100]), linetype = 3, size = 0.1, color = "grey50") + 
+  annotate(geom = "text", x = d80[24], y = data$n[24], label = paste("n = ", round(data$n[24], 2)), 
+            hjust = -0.02, vjust = 0.15, size = 3) + 
+  annotate(geom = "text", x = d80[62], y = data$n[62], label = paste("n = ", round(data$n[62], 2)),  
+            hjust = -0.02, vjust = 0.15, size = 3) + 
+  annotate(geom = "text", x = d80[100], y = data$n[100], label = paste("n = ", round(data$n[100], 2)), 
+            hjust = -0.02, vjust = 0.15, size = 3) +
+  annotate(geom = "text", x = d80[100], y = min(data$n) - 2.5, 
+           label = paste("s = ", round(d80[100], 2)), hjust = -0.02, size = 3) +
+  annotate(geom = "text", x = d80[62], y = min(data$n) - 2.5, 
+           label = paste("s = ", round(d80[31], 2)), hjust = -0.02, size = 3) +
+  annotate(geom = "text", x = d80[24], y = min(data$n) - 2.5, 
+           label = paste("s = ", round(d80[1], 2)), hjust = -0.02, size = 3) +
+  annotate(geom = "text", x = d70[60], y = data$n[52], label = "70% Power", hjust = -0.015,
+           size = 3, angle = 315) +
+  annotate(geom = "text", x = d80[58], y = data$n[52], label = "80% Power", hjust = -0.015,
+           size = 3, angle = 315) +
+  annotate(geom = "text", x = d90[52], y = data$n[47], label = "90% Power", hjust = -0.015,
+           size = 3, angle = 320) +
+  theme(panel.background = element_rect(fill = NA), legend.position = "none", 
+        legend.key = element_rect(fill = NA, color = "black"), 
+        text = element_text(family = "Arial", color = "black"))
+
+pwr.t2n.test(n1=105, n2=399, d=NULL, sig.level=.05, power=.8, alternative="two.sided")
+
+# simulation to test assumption that t-test of reverse exposure and outcome is okay
+n<-1000
+b<-.5
+
+est.log<-est.wil<-NULL
+for (i in 1:100) {
+	x<-rnorm(n)
+	y<-rbinom(n,1,exp(b*x)/(1+exp(b*x)))
+
+	mod1<-glm(y~x,family="binomial")
+	est.log[i]<-summary(mod1)$coeff[2,4]
+
+	est.wil[i]<-wilcox.test(x~y)$p.value
+
+}
+
+plot(est.log,est.wil)
+cor(est.log,est.wil)
+
+plot(log(est.log),log(est.wil))
+cor(log(est.log),log(est.wil))
+```
+
+# Figure 7: Study Flow Chart
+
+## Exlusion Criteria
+
+```{r exc_crit}
+# exclusion criteria include
+# no live birth
+# delivery at least 12 months before 2020-11-30
+
+final <- final %>%
+  mutate(lb_inc = ifelse(delivery_outcome == "Live Birth", 1, 0),
+         time_inc = ifelse((as.Date("2021-11-30") - as.Date(delivery_date)) > 365, 1, 0),
+         include = ifelse((lb_inc == 1 & time_inc == 1), 1, 0))
+
+# now make table of exclusion criteria by group
+table1(~ as.factor(lb_inc) + as.factor(time_inc) + as.factor(include) | group.female, final) %>%
+  t1flex() %>%
+  save_as_docx("exclusion_tab", path = "exclusion_tab.docx")
+```
+
+## Included Participants
+
+```{r incout}
+# make dataframe with only included participants and save it as "quant"
+quant <- final %>%
+  filter(include == 1)
+
+# add outcome columns for sensitivity analyses and imputations
+quant <- quant %>%
+  mutate(Y_lc = ifelse(!is.na(fp_final_binary), fp_final_binary, 0), # likely case, where missing data means no contraceptive uptake (will not use in imputation)
+         Y_raw = fp_final_binary, # for use in complete case analysis (will not impute or use in imputation)
+         Y_imp = Y_raw, # for use in imputation
+         Y_wc = ifelse(is.na(fp_final_binary), NA, Y_raw), # for worst-case when missing (will not use in imputation)
+         Y_wc = ifelse(is.na(Y_wc) & group.female == "Control", 1, Y_wc), # in control group
+         Y_wc = ifelse(is.na(Y_wc) & group.female == "Intervention", 0, Y_wc), # in intervention group
+         covid_sens = ifelse(as.Date(reg_date.female) < as.Date("2019-04-26"), 1, 0) # covid sensitivity analysis inclusion (1)
+  )
+
+# some checks
+table(quant$Y_lc, quant$group.female)
+table(quant$Y_raw, quant$group.female)
+table(quant$Y_imp, quant$group.female)
+table(quant$Y_wc, quant$group.female)
+
+# save it for aim 2 and 3
+Save(quant)
+```
+
+```{r fig7, fig.width=8, fig.height=10}
+# create figure 7, study flowchart
+
+# check clinic breakdown
+table(final$group.female)
+table(final$group.male)
+
+# set font
+par(family = "Arial")
+
+fig7 <- grViz("digraph flowchart {
+      # main nodes
+      node [fontname = Arial, shape = rectangle, penwidth = 1.5, fontsize = 14]        
+      all [label = 'Couples Screened (n = 2,483)']
+      offconsent [label = 'Couples Offered Consent (n = 1,164)']
+      consented [label = 'Couples Consented & Enrolled (n = 1,079)']
+      fenrolled [label = 'Eligible Female Partners (n = 1,073)']
+      intclin [label = 'Enrolled at intervention clinics (n = 524)']
+      contclin [label = 'Enrolled at control clinics (n = 549)']
+      finint [label = 'Included at intervention clinics (n = 416)']
+      fincont [label = 'Included at control clinics (n = 461)']
+      
+      # exclusion nodes (smaller fontsize)
+      node [fontname = Arial, shape = rectangle, penwidth = 1.5, fontsize = 12] 
+      notelig [label = 'Ineligible Couples* (n = 1,319)\\n
+        Couple did not do testing together in ANC (n = 42, 3%)
+        Couple is serodiscordant or both partners HIV negative (n  = 742, 56%)
+        One or both partners are already on ART (n = 189, 14%)
+        Delivery due date is less than 2 weeks from enrollment date (n = 43, 3%)
+        One or both partners are less than 18 (n = 75, 6%)
+        One or both partners cannot consent (n = 40, 3%)
+        Partners live in different locations and cannot come to clinc together (n = 103, 8%)
+        One or both partners decline starting ART (n = 103, 8%)
+        Missing reason (n = 14, 1%)']
+      notcons [label = 'Not Consented^ (n = 85)\\n
+        Male partner declined (n = 23, 24%)
+        Female partner declined (n = 11, 11%)
+        Both partners declined (n = 62, 65%)']
+      excall [label = 'One or both partners withdrew from the study (n = 6, 0.6%)']
+      excint [label = 'Ineligible Participants* (n = 108)\\n
+        Stillbirth or Miscarriage (n = 38)
+        Insufficient Follow Up** (n = 33)
+        Missing Eligibility Criteria (n = 39)']
+      exccont [label = 'Ineligible Participants* (n = 88)\\n
+        Stillbirth or Miscarriage (n = 19)
+        Insufficient Follow Up** (n = 21)
+        Missing Eligibility Criteria (n = 49)']
+      
+      # dummy nodes
+      node [shape=none, width=0, height=0, label='']
+      n1
+      n2
+      n3
+      n4
+      n5
+
+      # edge definitions with the node IDs
+      n1 -> notelig
+      n2 -> notcons
+      n1 -> offconsent
+      n2 -> consented
+      n3 -> fenrolled
+      n3 -> excall
+      fenrolled -> intclin
+      fenrolled -> contclin
+      n4 -> excint
+      n5 -> exccont
+      n4 -> finint
+      n5 -> fincont
+      {rank = same; n1 -> notelig}
+      {rank = same; n2 -> notcons}
+      {rank = same; n3 -> excall}
+      {rank = same; intclin; contclin}
+      {rank = same; excint, n4, n5, exccont}
+      {rank = same; finint; finint}
+      
+      edge[dir = none]
+      all -> n1
+      offconsent -> n2
+      consented -> n3
+      intclin -> n4
+      contclin -> n5
+      }
+      ")
+
+# export
+fig7 %>% 
+  export_svg() %>%
+  charToRaw() %>%
+  rsvg_pdf("fig7.pdf")
+# embed fonts
+embedFonts("fig7.pdf", fontpaths = "/Library/Fonts/Microsoft/Arial.ttf")
+
+# * indicates that individuals could share more than one reason
+# ^ indicates that there was a mix up and some couples were recorded as having more than one reason
+# **Delivery less than 1 year before Nov. 30, 2021
+```
+
+# Table 2: Baseline data
+
+```{r tab2}
+# now make table 2
+table1(~ as.factor(year.female) + age.female + district.female + rel_stat.female + 
+         edu_cat.female + job_cat.female + 
+         stigma_com.female + stigma_pt.female + 
+         trust.female + cog_emp.female + aff_emp.female +
+         soc_sup_ps.female + soc_sup_ns.female + # still need to add in clinical data (ART status, clinical stage, BMI, and outcome data)
+         hivk.female + phq9.female + who_stage + bmi | group.female, data = quant, 
+       render.continuous = c(.="Median [Q1, Q3]"), overall = FALSE) %>%
+  t1flex() %>%
+  save_as_docx("tab2", path = "tab2.docx")
+```
