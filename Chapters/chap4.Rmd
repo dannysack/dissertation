@@ -116,15 +116,15 @@ aim2_con <- aim2_con %>%
 
 # figure out how many imputations to do based on frequency of missingness
 describe(aim2)
-# highest is 22%, so will do 25 imputations
+# highest is 22%, so will do 25 imputations, 50 to be safe
 
 # do imputations
-int_imp <- mice(aim2_int, m = 25,
+int_imp <- mice(aim2_int, m = 50,
                 predictorMatrix = predmat,
                 defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
                 where = wheremat_int,
                 seed = 1111)
-con_imp <- mice(aim2_con, m = 25,
+con_imp <- mice(aim2_con, m = 50,
                 predictorMatrix = predmat,
                 defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
                 where = wheremat_con,
@@ -155,13 +155,13 @@ aim2_con_cov <- aim2_con_cov %>%
   mutate(job_cat.female = droplevels(job_cat.female),
          district.female = droplevels(district.female))
 
-# 25 imputations
-int_imp_cov <- mice(aim2_int_cov, m = 25,
+# 50 imputations
+int_imp_cov <- mice(aim2_int_cov, m = 50,
                 predictorMatrix = predmat,
                 defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
                 where = wheremat_int_cov,
                 seed = 1111)
-con_imp_cov <- mice(aim2_con_cov, m = 25,
+con_imp_cov <- mice(aim2_con_cov, m = 50,
                 predictorMatrix = predmat,
                 defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
                 where = wheremat_con_cov,
@@ -387,10 +387,10 @@ ua_form <- formula(Y_imp ~ group.female)
 a_form <- formula(Y_imp ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + district.female + who_stage
            + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3))
 cc_form <- formula(Y_raw ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + district.female + who_stage
+           + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3)) 
+lc_form <- formula(Y_lc ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + who_stage
            + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3))
-lc_form <- formula(Y_lc ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + district.female + who_stage
-           + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3))
-wc_form <- formula(Y_wc ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + district.female + who_stage
+wc_form <- formula(Y_wc ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + who_stage
            + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3))
 ```
 
@@ -402,7 +402,7 @@ prim_ua <- complete(imp_prim_aim2, "all") %>%
   map(~ mm(mean.formula = ua_form,
    lv.formula = ~ 1,
    id = clinic.female,
-   q = 50,
+   q = 120,
    data = .x)) 
 
 # nw use my own pooling and summary functions to create output value
@@ -424,7 +424,7 @@ prim_aa <- complete(imp_prim_aim2, "all") %>%
   map(~ mm(mean.formula = a_form,
    lv.formula = ~ 1,
    id = clinic.female,
-   q = 50,
+   q = 120,
    data = .x)) 
 
 # now use my own pooling and summary functions to create output value
@@ -439,7 +439,7 @@ prim2
 ```{r prim3}
 # run GEE across all iterations of the imputation (updated formula that works with md correction below)
 prim_alt_aa <- complete(imp_prim_aim2, "all") %>%
-  map(~ geeglm(formula = Y_imp ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) 
+  map(~ geeglm(formula = Y_imp ~ group.female + rcs(day.female, 3) + rcs(age.female, 3)
            + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3),
            family = binomial,
            id = clinic.female,
@@ -477,7 +477,7 @@ map2_df(prim_alt_aa_gee_check,
 ## COULD NOT PUT DISTRICT BACK IN ##
 # of note, ID is inherent to function (see above)
 prim_alt_aa_md <- complete(imp_prim_aim2, "all") %>%
-  map(~ geeglm.var.md(formula = Y_imp ~ group.female + rcs(day.female, 3) + rcs(age.female, 3)
+  map(~ geeglm.var.md(formula = Y_imp ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + 
            + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3),
            family = binomial,
            data = .x,
@@ -514,7 +514,7 @@ prim_cc <- complete(imp_prim_aim2, "all") %>%
   map(~ mm(mean.formula = cc_form,
    lv.formula = ~ 1,
    id = clinic.female,
-   q = 50,
+   q = 120,
    data = subset(.x, !is.na(Y_raw)))) 
 
 # now use my own pooling and summary functions to create output value
@@ -527,11 +527,12 @@ prim4
 ## Likely Case Missing Outcomes "No"
 
 ```{r prim5}
+# unclear why this one was not working...removed District
 prim_lc <- complete(imp_prim_aim2, "all") %>%
   map(~ mm(mean.formula = lc_form,
    lv.formula = ~ 1,
    id = clinic.female,
-   q = 50,
+   q = 120,
    data = .x)) 
 
 # now use my own pooling and summary functions to create output value
@@ -544,11 +545,12 @@ prim5
 ## Worst-case scenario
 
 ```{r prim6}
+# took out district
 prim_wc <- complete(imp_prim_aim2, "all") %>%
   map(~ mm(mean.formula = wc_form,
    lv.formula = ~ 1,
    id = clinic.female,
-   q = 50,
+   q = 120,
    data = .x)) 
 
 # now use my own pooling and summary functions to create output value
@@ -577,7 +579,7 @@ cov_ua <- complete(imp_prim_aim2_cov, "all") %>%
   map(~ mm(mean.formula = ua_form,
    lv.formula = ~ 1,
    id = clinic.female,
-   q = 50,
+   q = 120,
    data = .x)) 
 
 # nw use my own pooling and summary functions to create output value
@@ -594,7 +596,7 @@ cov_aa <- complete(imp_prim_aim2_cov, "all") %>%
   map(~ mm(mean.formula = a_form,
    lv.formula = ~ 1,
    id = clinic.female,
-   q = 50,
+   q = 120,
    data = .x)) 
 
 # nw use my own pooling and summary functions to create output value
@@ -620,7 +622,7 @@ prim_em <- complete(imp_prim_em, "all") %>%
            + edu_cat.female + edu_cat.male + who_stage,
    lv.formula = ~ 1,
    id = clinic.female,
-   q = 50,
+   q = 120,
    data = .x)) 
 
 # now use my own pooling and summary functions to create output value
@@ -629,40 +631,109 @@ prim9 <- prim_em %>%
   summary
 prim9
 
+# # create partial effects plot
+# # pull data from imputed object
+# dat <- complete(imp_prim_em, action = "long")
+# # Specify population model for log odds that Y=1
+# L <- prim9$estimate[1] + 
+#   prim9$estimate[2]*(dat$group.female == "Intervention") + 
+#   prim9$estimate[3]*(dat$tot.ss) + 
+#   prim9$estimate[4]*(dat$day.female < 450) + 
+#   prim9$estimate[5]*(dat$day.female > 449) + 
+#   prim9$estimate[6]*(dat$age.female < 23) + 
+#   prim9$estimate[7]*(dat$age.female > 22) + 
+#   prim9$estimate[8]*(dat$district.female == "Inhassunge") + 
+#   prim9$estimate[9]*(dat$district.female == "Namacurra") + 
+#   prim9$estimate[10]*(dat$district.female == "Mocubela") + 
+#   prim9$estimate[11]*(dat$district.female == "Maganja da Costa") + 
+#   prim9$estimate[12]*(dat$district.female == "Gilé") + 
+#   prim9$estimate[13]*(dat$district.female == "Quelimane") + 
+#   prim9$estimate[14]*(dat$edu_cat.female == "Some Primary School (Grades 1-7)")  + 
+#   prim9$estimate[15]*(dat$edu_cat.female == "Completed Primary School (Grade 7)") + 
+#   prim9$estimate[16]*(dat$edu_cat.female == "Some Secondary School (Grades 8-10)") + 
+#   prim9$estimate[17]*(dat$edu_cat.female == "Completed Secondary School (Grade 10)") + 
+#   prim9$estimate[18]*(dat$edu_cat.female == "College/Higher Education") + 
+#   prim9$estimate[19]*(dat$edu_cat.male == "Some Primary School (Grades 1-7)")  + 
+#   prim9$estimate[20]*(dat$edu_cat.male == "Completed Primary School (Grade 7)") + 
+#   prim9$estimate[21]*(dat$edu_cat.male == "Some Secondary School (Grades 8-10)") + 
+#   prim9$estimate[22]*(dat$edu_cat.male == "Completed Secondary School (Grade 10)") + 
+#   prim9$estimate[23]*(dat$edu_cat.male == "College/Higher Education") + 
+#   prim9$estimate[24]*(dat$who_stage == "II") + 
+#   prim9$estimate[25]*(dat$who_stage == "III") + 
+#   prim9$estimate[26]*(dat$who_stage == "IV") + 
+#   prim9$estimate[27]*(dat$group.female == "Intervention")*( dat$tot.ss) 
+# # Simulate binary y to have Prob(y=1) = 1/[1+exp(-L)]
+# y <- ifelse(runif(nrow(dat)) < plogis(L), 1, 0)
+# 
+# dat$y <- y
+# dat$clinic.female <- factor(dat$clinic.female)
+# 
+# ddist <- datadist(dat)
+# options(datadist='ddist')
+# 
+# fit <- lrm(y ~ group.female + tot.ss, data = dat, x = TRUE, y = TRUE)
+# 
+# # create partial effect plot
+# ggplot(Predict(fit, tot.ss, group.female, fun = plogis))
+
+# # add data to lists of prim_em
+# for(i in 1:25){
+#   data <- list(data = complete(imp_prim_em, i))
+#   prim_em[[i]] <- append(prim_em[[i]], data)
+# }
+# 
+# # still doesn't work
+# pred_em <- prim_em %>%
+#  map(~ ggpredict(.x, terms = c("tot.ss", "group.female"))) %>%
+#  pool_predictions()
+
 # this is very complicated, perhaps the best I can do is say whether or not there is evidence of interaction by looking at p-value of the interaction term?
 # beyond the scope to figure out formula for assessing ORs at different levels of tot.ss (with covariates) given that MM model is not incorporated into most available packages
 
-# try it with ggeffects pool_predictions, requires using GEE
-#gee_em <- complete(imp_prim_em, "all") %>%
-#  map(~ geeglm(formula = Y_imp ~ group.female*tot.ss + rcs(day.female, 3) + rcs(age.female, 3) + district.female
-#           + edu_cat.female + edu_cat.male + who_stage,
-#           family = binomial,
-#           id = clinic.female,
-#           data = .x,
-#           corstr = "exchangeable"))
+# try it with ggeffects pool_predictions, requires using GEE w/o spline terms
+gee_em <- complete(imp_prim_em, "all") %>%
+ map(~ geeglm(formula = Y_imp ~ group.female*tot.ss + day.female + age.female + district.female
+          + edu_cat.female + edu_cat.male + who_stage,
+          family = binomial,
+          id = clinic.female,
+          data = .x,
+          corstr = "exchangeable"))
 
 # now pool predictions in dataframe (not working at the moment: https://github.com/strengejacke/ggeffects/issues/222)
-#pred_em <- gee_em %>%
-#  map(~ ggpredict(.x, terms = c("tot.ss", "group.female"))) %>%
-#  pool_predictions()
-# still not working 12/16/2021
+pred_em <- gee_em %>%
+ map(~ ggpredict(.x, terms = c("tot.ss", "group.female"))) %>%
+ pool_predictions()
+
+# # plot it
+pred_em %>% plot() +
+  ylab("Probability of ostpartum Contraceptive Use") +
+  xlab("Total Social Support") +
+  ggtitle("") +
+  scale_color_manual(name = "", values = c("#f89540", "#7e03a8")) +
+  scale_fill_manual(name = "", values = c("#f89540", "#7e03a8")) +
+  theme(legend.position = "bottom",
+        legend.key = element_rect(fill = NA, color = NA),
+        text = element_text(family = "Arial"), 
+        axis.line = element_line(), 
+        axis.text = element_text(family = "Arial", color = "black"))
+  
 
 # tying with lme4 package to see if I can at least get it to work
 # splines in other covariates cause problems (can likely fix by telling ggeffects where the knots are)
-#library(lme4)
-#glmm_em <- complete(imp_prim_em, "all") %>%
+# library(lme4)
+# glmm_em <- complete(imp_prim_em, "all") %>%
 #  map(~ glmer(formula = Y_imp ~ group.female*rcs(tot.ss, 3) + day.female + age.female + district.female
 #           + edu_cat.female + edu_cat.male + who_stage + (1 | clinic.female),
 #           family = binomial,
 #           data = .x))
-
-# pool predictions
-#pred_em <- glmm_em %>%
+# 
+# # pool predictions
+# pred_em <- glmm_em %>%
 #  map(~ ggpredict(.x, terms = c("tot.ss", "group.female"))) %>%
 #  pool_predictions()
-
-# plot it
-#pred_em %>% plot()
+# 
+# # plot it
+# pred_em %>% plot()
 ```
 
 # Figure 14 - Forest Plot of Effect Estimates
@@ -674,10 +745,10 @@ prim9
 # create tibble (need to update names)
 fig14 <- tibble(Analysis = c("1) MMM Unadjusted Analysis", 
                             "2) MMM Adjusted Analysis", 
-                            "3) GEE with MD Variance Correction Adjusted Analysis",
-                            "4) Outcome Complete Case MMM Adjusted Analysis",
-                            "5) Likely Outcome MMM Adjusted Analysis",
-                            "6) Worst-Case MMM Sensitivity Analysis",
+                            "3) GEE with MD Variance Correction Adjusted Analysis*",
+                            "4) Complete Case MMM Adjusted Analysis",
+                            "5) Likely Outcome MMM Adjusted Analysis**",
+                            "6) Worst-Case MMM Sensitivity Analysis**",
                             "7) MMM Unadjusted Pre-COVID-19 Analysis",
                             "8) MMM Adjusted Pre-COVID-19 Analysis"),
                coef = c(prim1$estimate[2],
@@ -707,7 +778,7 @@ fig14 <- tibble(Analysis = c("1) MMM Unadjusted Analysis",
 tabletext <- cbind(c("Analysis", fig14$Analysis), 
                    c("Odds Ratio (95% CI)", fig14$`Odds Ratio (95% Confidence Interval)`))
 
-#pdf("fig14.pdf", height = 6, width = 10)
+#pdf("fig14_final.pdf", height = 6, width = 10)
 forestplot(tabletext,
            mean = c(NA, fig14$or),
            lower = c(NA, fig14$or_lb),
@@ -725,7 +796,7 @@ forestplot(tabletext,
                             xlab=gpar(cex=0.9)))
 #dev.off()
 # embed the font
-#embed_fonts("fig14.pdf")
+#embed_fonts("fig14_final.pdf")
 ```
 
 # Potential Secondary Analyses - Time to Contraception
