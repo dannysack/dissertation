@@ -11,5 +11,6 @@ Folders
 - Cleaning: the code used to clean each data source
 - Chapters: the code generated to generate the tables and figures (and run the analyses) for each chapter
 - Additional Code: any additional code, such as new or adapted functions outside of those in the .Rmd files (the chapter 4 and 5 .Rmd files also include some adpated functions)
+- Contraceptive Outcome: the de-identified data on code for analysis in Postpartum contraceptive use among seroconcordant partners with HIV in rural Mozambique: secondary analysis of a cluster randomized trial, currently under review
 
 The following paper, "Postpartum contraceptive use among seroconcordant partners with HIV in rural Mozambique: secondary analysis of a cluster randomized trial" is based on the work from Chapter 4. All code used in this manuscript, currently under review, is contained within the Chapters/Chap4.Rmd file.

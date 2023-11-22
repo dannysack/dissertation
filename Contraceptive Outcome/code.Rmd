@@ -1,0 +1,663 @@
+---
+title: "Postpartum contraceptive use among seroconcordant partners with HIV in rural Mozambique: secondary analysis of a cluster randomized trial"
+author: "Danny Sack<br><small>Division of Epidemiology<br>Vanderbilt University School of Medicine</small>"
+date: "<small>`r Sys.Date()`</small>"
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    lightbox: true
+    code_download: true
+description: "HoPS+ Baseline Data"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(rms)
+library(table1)
+library(flextable)
+library(extrafont)
+library(ggpubr)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+library(MMLB)
+library(geepack)
+library(geesmv)
+library(mice)
+library(forestplot)
+library(survival)
+library(survminer)
+library(matrixcalc)
+library(ggeffects)
+
+loadfonts()
+knitrSet(lang='markdown', fig.path='png/', fig.align='center', w=6, h=4, cache=TRUE)
+options(prType='html')
+set.seed(1111)
+
+# load deidentified data
+Load(aim2)
+```
+
+# Imputations
+
+```{r imps, fig.height=10, fig.width=10}
+# create predictor matrix
+predmat <- make.predictorMatrix(aim2)
+
+# now edit predictor matrix, from "mice" documentation
+# "Each row corresponds to a variable block, i.e., a set of variables to be imputed. 
+# A value of 1 means that the column variable is used as a predictor for the target block (in the rows)."
+# my understanding is that the column then denotes whether that variable will be used to predict the row variable
+
+# first make clinic the cluster variable for all predictions (except it's own)
+# only need to do it in the column because it is not missing in the rows
+predmat[, "clinic.female"] <- -2
+predmat["clinic.female", "clinic.female"] <- 0
+
+# first remove covid-sens from the analysis (since we don't want it to predict anything)
+# we also don't want Y_lc or Y_raw or Y_wc to predict anything
+predmat[c("Y_lc", "Y_raw", "Y_wc", "covid_sens"),] <- 0
+predmat[,c("Y_lc", "Y_raw", "Y_wc", "covid_sens")] <- 0
+
+# now subest into intervention and control for seperate imputations
+aim2_int <- aim2 %>% filter(group.female == "Intervention")
+aim2_con <- aim2 %>% filter(group.female == "Control")
+
+# vector of things to exclude from imputations
+exc <- c("Y_lc", "Y_raw", "Y_wc", "covid_sens")
+
+# finally create a matrix of variables not to impute (by setting is.na to FALSE)
+wheremat_int <- is.na(aim2_int)
+wheremat_int[, exc] <- FALSE
+wheremat_con <- is.na(aim2_con)
+wheremat_con[, exc] <- FALSE
+
+# finally have to remove some categories from factors...
+## DO THIS BASED ON WHAT DOES NOT WORK BELOW ##
+aim2_int <- aim2_int %>%
+  mutate(district.female = droplevels(district.female))
+aim2_con <- aim2_con %>%
+  mutate(job_cat.female = droplevels(job_cat.female),
+         district.female = droplevels(district.female))
+
+# figure out how many imputations to do based on frequency of missingness
+describe(aim2)
+# highest is 22%, so will do 25 imputations, 50 to be safe
+
+# do imputations
+int_imp <- mice(aim2_int, m = 50,
+                predictorMatrix = predmat,
+                defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
+                where = wheremat_int,
+                seed = 1111)
+con_imp <- mice(aim2_con, m = 50,
+                predictorMatrix = predmat,
+                defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
+                where = wheremat_con,
+                seed = 1111)
+
+# now combine imputation objects for analysis
+imp_prim_aim2 <- rbind(int_imp, con_imp)
+
+# now save for future analyses
+Save(imp_prim_aim2)
+
+# now replicate for covid sensitivity analyses
+# now subest into intervention and control for seperate imputations
+aim2_int_cov <- aim2 %>% filter(group.female == "Intervention", covid_sens == 1)
+aim2_con_cov <- aim2 %>% filter(group.female == "Control", covid_sens == 1)
+
+# finally create a matrix of variables not to impute (by setting is.na to FALSE)
+wheremat_int_cov <- is.na(aim2_int_cov)
+wheremat_int_cov[, exc] <- FALSE
+wheremat_con_cov <- is.na(aim2_con_cov)
+wheremat_con_cov[, exc] <- FALSE
+
+# finally have to remove some categories from factors...
+## DO THIS BASED ON WHAT DOES NOT WORK BELOW ##
+aim2_int_cov <- aim2_int_cov %>%
+  mutate(district.female = droplevels(district.female))
+aim2_con_cov <- aim2_con_cov %>%
+  mutate(job_cat.female = droplevels(job_cat.female),
+         district.female = droplevels(district.female))
+
+# 50 imputations
+int_imp_cov <- mice(aim2_int_cov, m = 50,
+                predictorMatrix = predmat,
+                defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
+                where = wheremat_int_cov,
+                seed = 1111)
+con_imp_cov <- mice(aim2_con_cov, m = 50,
+                predictorMatrix = predmat,
+                defaultMethod = c("pmm", "2l.bin", "polyreg", "polr"),
+                where = wheremat_con_cov,
+                seed = 1111)
+
+# now combine imputation objects for analysis
+imp_prim_aim2_cov <- rbind(int_imp_cov, con_imp_cov)
+
+# now save for future analyses
+Save(imp_prim_aim2_cov)
+
+# do some diagnostics
+
+# stripplots to check distributions of imputed data
+stripplot(imp_prim_aim2)
+stripplot(imp_prim_aim2_cov)
+
+# bwplots to re-check distributions of imputed data
+bwplot(imp_prim_aim2)
+bwplot(imp_prim_aim2_cov)
+```
+
+# Primary Analyses
+
+```{r primana}
+# start by pulling in imputed data
+Load(imp_prim_aim2)
+
+# first need to make clinic.female a factor in all iterations
+long <- complete(imp_prim_aim2, action = "long", include = TRUE)
+long$clinic.female <- factor(long$clinic.female)
+# now make it back into a mids object
+imp_prim_aim2 <- as.mids(long)
+
+
+# create function for pooling mm function
+
+# first need to create tidy dataframe with 6 colums: term, estimate, std.error, statistic, p.value, and nobs (degrees of freedom) from MMLogit class (from GEE version)
+# rows is the number of rows in the combined dataset
+fitlist.mm <- function(object, rows) {
+  # first get summary
+  sum <- summary(object)
+  # now make tidy version
+  sum_tidy <- as_tibble(sum$mean.table) %>%
+    add_column(term = rownames(sum$mean.table), .before = 1) %>%
+    mutate(nobs = rows) %>%
+    rename(estimate = Estimate,
+          std.error = `Model SE`,
+          statistic = `Chi Square`,
+          p.value = `Pr(>Chi)`)
+  sum_tidy
+}
+
+# now make glanced list with rows n.clusters, max.cluster.size, alpha,  and nobs
+glanced.mm <- function(object, rows) {
+  data.frame(n.clusters = unname(object$control["n_subj"]),
+             max.cluster.size = unname(object$control["max_n_visit"]),
+             alpha = unname(object$alpha),
+             nobs = rows)
+}
+
+# barnard rubin function pulled directly from mice code https://rdrr.io/cran/mice/src/R/barnard.rubin.R
+barnard.rubin <- function(m, b, t, dfcom = 999999) {
+  lambda <- (1 + 1 / m) * b / t
+  lambda[lambda < 1e-04] <- 1e-04
+  dfold <- (m - 1) / lambda^2
+  dfobs <- (dfcom + 1) / (dfcom + 3) * dfcom * (1 - lambda)
+  dfold * dfobs / (dfold + dfobs)
+}
+
+pool.mm <- function(object, rows) {
+  call <- paste0("pool(object = ")
+  # based on pool.fitlist from https://rdrr.io/cran/mice/src/R/pool.R
+  p <- map_df(object, ~ fitlist.mm(.x, rows))
+  
+  # we don't want group_by to change the order of the terms
+  p <- p %>% mutate(term = factor(term, levels = unique(term)))
+  
+  pooled <- p %>%
+    group_by(term) %>%
+    summarise(
+      m = n(),
+      qbar = mean(estimate),
+      ubar = mean(std.error^2),
+      b = var(estimate),
+      t = ubar + (1 + 1 / m) * b,
+      dfcom = rows,
+      df = barnard.rubin(m, b, t, dfcom),
+      riv = (1 + 1 / m) * b / ubar,
+      lambda = (1 + 1 / m) * b / t,
+      fmi = (riv + 2 / (df + 3)) / (riv + 1)
+    )
+  pooled <- data.frame(pooled)
+  names(pooled)[names(pooled) == "qbar"] <- "estimate"
+  
+  # based on https://rdrr.io/cran/mice/src/R/get.df.R
+  g <- map_df(object, ~ glanced.mm(.x, rows))
+  
+  # finally need make mipo object to work with mice summary function
+  mipo.mm <- list(m = pooled$m[1],
+                  pooled = pooled,
+                  glanced = g)
+  class(mipo.mm) <- c("mipo", "data.frame")
+  mipo.mm
+}
+
+# write updated GEE with MD correction function using geeglm instead of gee
+# adpated from https://rdrr.io/cran/geesmv/src/R/GEE.var.md.R
+geeglm.var.md <- function(formula, family, data, corstr){ # could not get id to work without writing into the function, so not transferable...
+  
+  # get model design matrix
+  m <- model.frame(formula, data)
+  mt <- attr(m, "terms") 
+  data$response <- model.response(m, "numeric")
+  mat <- as.data.frame(model.matrix(formula, m))
+  
+  # fit GEE model
+  gee.fit <- geeglm(formula = formula,
+           family = family,
+           id = clinic.female, ### UPDATE ID HERE IF MOVING TO DIFFERENT MODEL WITH DIFFERENT ID ###
+           data = data,
+           corstr = corstr)
+  beta_est <- gee.fit$coefficient
+  alpha <- gee.fit$geese$alpha # updated this line to get alpha directly
+  len <- length(beta_est)
+  len_vec <- len^2
+  
+  ### Estimate the robust variance for \hat{\beta}
+  data$id_fit <- unname(gee.fit$id) # updated with unname and updated variable to "id_fit"
+  cluster<-cluster.size(data$id_fit)
+  ncluster<-max(cluster$n)
+  size<-cluster$m
+  mat$subj <- rep(unique(data$id_fit), cluster$n)
+  if(is.character(corstr)){
+    var <- switch(corstr,
+               "independence"=cormax.ind(ncluster),
+               "exchangeable"=cormax.exch(ncluster, alpha),
+               "AR-M"=cormax.ar1(ncluster, alpha),
+               "unstructured"=summary(gee.fit)$working.correlation,)
+  }else{
+       print(corstr)
+       stop("'working correlation structure' not recognized")
+  }  
+  if(is.character(family)){
+    family <- switch(family,
+                  "gaussian"="gaussian",
+                  "binomial"="binomial",
+                  "poisson"="poisson")
+  }else{ 
+    if(is.function(family)){
+      family <- family()[[1]]
+    }else{
+       print(family)
+       stop("'family' not recognized")
+    }    
+  }
+  
+  # calculate MD correlation 
+  cov.beta<-unstr<-matrix(0,nrow=len,ncol=len)
+  step11<-matrix(0, nrow=len, ncol=len)
+  for (i in 1:size){
+  	y<-as.matrix(data$response[data$id_fit==unique(data$id_fit)[i]])
+    covariate<-as.matrix(subset(mat[,-length(mat[1,])], mat$subj==unique(data$id_fit)[i]))
+    var_i=var[1:cluster$n[i],1:cluster$n[i]]
+    if (family=="gaussian"){ 
+       xx<-t(covariate)%*%solve(var_i)%*%covariate
+       step11<-step11+xx  
+    }else if (family=="poisson") {
+       D<-mat.prod(covariate, exp(covariate%*%beta_est))
+       Vi <- diag(sqrt(c(exp(covariate%*%beta_est))),cluster$n[i])%*%var_i%*%diag(sqrt(c(exp(covariate%*%beta_est))),cluster$n[i])
+       xx<-t(D)%*%solve(Vi)%*%D
+       step11<-step11+xx
+    }else if (family=="binomial"){
+    	D<-mat.prod(covariate, exp(covariate%*%beta_est)/((1+exp(covariate%*%beta_est))^2))
+        Vi <- diag(sqrt(c(exp(covariate%*%beta_est)/(1+exp(covariate%*%beta_est))^2)),cluster$n[i])%*%var_i%*%diag(sqrt(c(exp(covariate%*%beta_est)/(1+exp(covariate%*%beta_est))^2)),cluster$n[i])
+        xx<-t(D)%*%solve(Vi)%*%D
+        step11<-step11+xx 
+    }
+  }
+  step12<-matrix(0,nrow=len,ncol=len)
+  step13<-matrix(0,nrow=len_vec,ncol=1)
+  step14<-matrix(0,nrow=len_vec,ncol=len_vec)
+  p<-matrix(0,nrow=len_vec,ncol=size)
+  for (i in 1:size){
+  	y<-as.matrix(data$response[data$id_fit==unique(data$id)[i]])
+    covariate<-as.matrix(subset(mat[,-length(mat[1,])], mat$subj==unique(data$id_fit)[i]))
+    var_i=var[1:cluster$n[i],1:cluster$n[i]]
+    if (family=="gaussian"){ 
+        xy<-t(covariate)%*%solve(var_i)%*%solve(cormax.ind(cluster$n[i])-covariate%*%solve(step11)%*%t(covariate)%*%solve(var_i))%*%(y-covariate%*%beta_est)
+        step12<-step12+xy%*%t(xy)
+        step13<-step13+vec(xy%*%t(xy))
+        p[,i]<-vec(xy%*%t(xy))
+     }else if (family=="poisson") {
+     	D<-mat.prod(covariate, exp(covariate%*%beta_est))
+     	Vi <- diag(sqrt(c(exp(covariate%*%beta_est))),cluster$n[i])%*%var_i%*%diag(sqrt(c(exp(covariate%*%beta_est))),cluster$n[i])
+        xy<-t(D)%*%solve(Vi)%*%solve(cormax.ind(cluster$n[i])-D%*%solve(step11)%*%t(D)%*%solve(Vi))%*%(y-exp(covariate%*%beta_est))
+        step12<-step12+xy%*%t(xy)
+        step13<-step13+vec(xy%*%t(xy))
+        p[,i]<-vec(xy%*%t(xy))
+     }else if (family=="binomial"){
+       D<-mat.prod(covariate, exp(covariate%*%beta_est)/((1+exp(covariate%*%beta_est))^2))
+       Vi <- diag(sqrt(c(exp(covariate%*%beta_est)/(1+exp(covariate%*%beta_est))^2)),cluster$n[i])%*%var_i%*%diag(sqrt(c(exp(covariate%*%beta_est)/(1+exp(covariate%*%beta_est))^2)),cluster$n[i])
+       xy<-t(D)%*%solve(Vi)%*%solve(cormax.ind(cluster$n[i])-D%*%solve(step11)%*%t(D)%*%solve(Vi))%*%(y-exp(covariate%*%beta_est)/(1+exp(covariate%*%beta_est)))
+       step12<-step12+xy%*%t(xy)
+       step13<-step13+vec(xy%*%t(xy))
+       p[,i]<-vec(xy%*%t(xy)) 
+    }    
+  }
+  for (i in 1:size){
+    dif<-(p[,i]-step13/size)%*%t(p[,i]-step13/size)
+    step14<-step14+dif
+  }
+  cov.beta<-solve(step11)%*%(step12)%*%solve(step11)
+  cov.var<-size/(size-1)*kronecker(solve(step11), solve(step11))%*%step14%*%kronecker(solve(step11), solve(step11))
+  return(list(cov.beta=diag(cov.beta), cov.var=cov.var))
+}
+
+
+
+# now create my formulas # FIGURE OUT KEY OUTCOME...
+ua_form <- formula(Y_imp ~ group.female)
+# given different outcomes
+a_form <- formula(Y_imp ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + district.female + who_stage
+           + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3))
+cc_form <- formula(Y_raw ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + district.female + who_stage
+           + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3)) 
+lc_form <- formula(Y_lc ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + who_stage
+           + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3))
+wc_form <- formula(Y_wc ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + who_stage
+           + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3))
+```
+
+## Unadjusted Analysis
+
+```{r prim1}
+# run MM across all iterations of the imputation
+prim_ua <- complete(imp_prim_aim2, "all") %>%
+  map(~ mm(mean.formula = ua_form,
+   lv.formula = ~ 1,
+   id = clinic.female,
+   q = 120,
+   data = .x)) 
+
+# nw use my own pooling and summary functions to create output value
+prim1 <- prim_ua %>%
+  pool.mm(., nrow(complete(imp_prim_aim2, 1))) %>%
+  summary
+prim1
+
+# figure out sigma (this will influence what model I use moving forward)
+map_dbl(prim_ua, ~.x$alpha)
+map_dbl(prim_ua, ~.x$alpha) %>% abs() %>% summary()
+```
+
+## Adjusted Analysis
+
+```{r prim2}
+# run MM across all iterations of the imputation
+prim_aa <- complete(imp_prim_aim2, "all") %>%
+  map(~ mm(mean.formula = a_form,
+   lv.formula = ~ 1,
+   id = clinic.female,
+   q = 120,
+   data = .x)) 
+
+# now use my own pooling and summary functions to create output value
+prim2 <- prim_aa %>%
+  pool.mm(., nrow(complete(imp_prim_aim2, 1))) %>%
+  summary
+prim2
+```
+
+## Alternative Adjusted Analysis
+
+```{r prim3}
+# run GEE across all iterations of the imputation (updated formula that works with md correction below)
+prim_alt_aa <- complete(imp_prim_aim2, "all") %>%
+  map(~ geeglm(formula = Y_imp ~ group.female + rcs(day.female, 3) + rcs(age.female, 3)
+           + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3),
+           family = binomial,
+           id = clinic.female,
+           data = .x,
+           corstr = "exchangeable")) 
+
+# can pool with mice functions for GEE
+prim3 <- prim_alt_aa %>%
+  pool() %>%
+  summary()
+prim3
+
+# GEE with MD correction with geesmv package
+prim_alt_aa_gee_check <- complete(imp_prim_aim2, "all") %>%
+  map(~ GEE.var.md(formula = ua_form,
+           family = binomial,
+           id = "clinic.female",
+           data = .x,
+           corstr = "exchangeable")) 
+
+# GEE with my function, can test they are the same with the unadjusted formula
+prim_alt_aa_geeglm_check <- complete(imp_prim_aim2, "all") %>%
+  map(~ geeglm.var.md(formula = ua_form,
+           family = binomial,
+           data = .x,
+           corstr = "exchangeable")) 
+
+# check that true to three decimal places
+map2_df(prim_alt_aa_gee_check,
+         prim_alt_aa_geeglm_check, 
+         ~ round(.x$cov.beta, 3) == round(.y$cov.beta, 3))
+
+# now final version  ## HIGHLY DEPENDED ON INCLUDED COVARIATES AND OUTCOME FOR SINGULARITY ##
+## definitely have to remove who_stage, may have to remove district as well, but outcome dependent
+## COULD NOT PUT DISTRICT BACK IN ##
+# of note, ID is inherent to function (see above)
+prim_alt_aa_md <- complete(imp_prim_aim2, "all") %>%
+  map(~ geeglm.var.md(formula = Y_imp ~ group.female + rcs(day.female, 3) + rcs(age.female, 3) + 
+           + edu_cat.female + edu_cat.male + rcs(soc_sup_ps.female, 3) + rcs(soc_sup_ns.female, 3),
+           family = binomial,
+           data = .x,
+           corstr = "exchangeable")) 
+
+# need to write function for GEEmd list $cov.beta[2] is what I'm interested in, since I only care about the intervention estimate :)
+# using Rubin's rules from https://bookdown.org/mwheymans/bookmi/rubins-rules.html
+# if m is the number of imputations
+# vw = 1/m * sum(se^2)
+# vb = sum(pooled beta - beta in each imputed dataset)^2 / (m - 1)
+# vtotal = vw + vb+ vb/m
+# se = sqrt(vtotal)
+
+# m
+m <- length(prim_alt_aa_md)
+# first calculate vw
+vw <- (1 / m) * sum(map_df(prim_alt_aa_md, ~ .x$cov.beta[2]))
+# then calculate vb
+num_vb <- map_df(prim_alt_aa, ~ .x$coefficients[2]) %>% # pull out intervention coefficients from imputed datasets
+  mutate(overall.coef = prim3$estimate[2], 
+         diff = overall.coef - group.femaleIntervention) %>% # add difference between overal coefficient and coefficient from each dataset
+  pull(diff) %>% sum() # pull out that column and sum it
+vb <- num_vb / (m - 1)
+# now calculate vtotal
+vtotal <- vw + vb + (vb / m)
+se_prim3 <- sqrt(vtotal)
+```
+
+## Complete Case Adjusted Analysis
+
+```{r prim4}
+# unclear why this one was not working...removed WHO stage...then worked later...
+prim_cc <- complete(imp_prim_aim2, "all") %>%
+  map(~ mm(mean.formula = cc_form,
+   lv.formula = ~ 1,
+   id = clinic.female,
+   q = 120,
+   data = subset(.x, !is.na(Y_raw)))) 
+
+# now use my own pooling and summary functions to create output value
+prim4 <- prim_cc %>%
+  pool.mm(., sum(!is.na(complete(imp_prim_aim2, 1)$Y_raw))) %>%
+  summary
+prim4
+```
+
+## Likely Case Missing Outcomes "No"
+
+```{r prim5}
+# unclear why this one was not working...removed District
+prim_lc <- complete(imp_prim_aim2, "all") %>%
+  map(~ mm(mean.formula = lc_form,
+   lv.formula = ~ 1,
+   id = clinic.female,
+   q = 120,
+   data = .x)) 
+
+# now use my own pooling and summary functions to create output value
+prim5 <- prim_lc %>%
+  pool.mm(., nrow(complete(imp_prim_aim2, 1))) %>%
+  summary
+prim5
+```
+
+## Worst-case scenario
+
+```{r prim6}
+# took out district
+prim_wc <- complete(imp_prim_aim2, "all") %>%
+  map(~ mm(mean.formula = wc_form,
+   lv.formula = ~ 1,
+   id = clinic.female,
+   q = 120,
+   data = .x)) 
+
+# now use my own pooling and summary functions to create output value
+prim6 <- prim_wc %>%
+  pool.mm(., nrow(complete(imp_prim_aim2, 1))) %>%
+  summary
+prim6
+```
+
+## COVID-19 Sensitivity Analyses
+
+```{r covsens}
+Load(imp_prim_aim2_cov)
+
+# first need to make clinic.female a factor in all iterations
+long <- complete(imp_prim_aim2_cov, action = "long", include = TRUE)
+long$clinic.female <- factor(long$clinic.female)
+# now make it back into a mids object
+imp_prim_aim2_cov <- as.mids(long)
+```
+
+### Unadjusted analysis
+
+```{r cov1}
+cov_ua <- complete(imp_prim_aim2_cov, "all") %>%
+  map(~ mm(mean.formula = ua_form,
+   lv.formula = ~ 1,
+   id = clinic.female,
+   q = 120,
+   data = .x)) 
+
+# nw use my own pooling and summary functions to create output value
+cov1 <- cov_ua %>%
+  pool.mm(., nrow(complete(imp_prim_aim2_cov, 1))) %>%
+  summary
+cov1
+```
+
+### Adjusted analysis
+
+```{r cov2}
+cov_aa <- complete(imp_prim_aim2_cov, "all") %>%
+  map(~ mm(mean.formula = a_form,
+   lv.formula = ~ 1,
+   id = clinic.female,
+   q = 120,
+   data = .x)) 
+
+# nw use my own pooling and summary functions to create output value
+cov2 <- cov_aa %>%
+  pool.mm(., nrow(complete(imp_prim_aim2_cov, 1))) %>%
+  summary
+cov2
+```
+
+## Effect Modification by Social Support
+
+```{r emprim}
+# first add column to all imputed datasets with total social support
+imp_prim_em <- complete(imp_prim_aim2, action = "long", include = TRUE) %>% # make long
+  mutate(tot.ss = soc_sup_ps.female + soc_sup_ns.female) %>% # add column
+  select(`.imp`, `.id`, Y_imp, group.female, tot.ss, day.female, age.female, district.female,
+         edu_cat.female, edu_cat.male, who_stage, clinic.female) %>% # limit to variables in the model
+  as.mids()
+
+# run MM across all iterations of the imputation
+prim_em <- complete(imp_prim_em, "all") %>%
+  map(~ mm(mean.formula = Y_imp ~ group.female*tot.ss + rcs(day.female, 3) + rcs(age.female, 3) + district.female
+           + edu_cat.female + edu_cat.male + who_stage,
+   lv.formula = ~ 1,
+   id = clinic.female,
+   q = 120,
+   data = .x)) 
+
+# now use my own pooling and summary functions to create output value
+prim9 <- prim_em %>%
+  pool.mm(., nrow(complete(imp_prim_em, 1))) %>%
+  summary
+prim9
+```
+
+# Figure 2 - Forest Plot of Effect Estimates
+
+```{r fig2, fig.width=10, fig.height=6}
+# first extract coefficients and standard errors from prim1:prim6, cov1:cov2
+# need to figure out what to do about the interaction terms later...
+
+# create tibble (need to update names)
+fig2 <- tibble(Analysis = c("1) MMM Unadjusted Analysis", 
+                            "2) MMM Adjusted Analysis", 
+                            "3) GEE with MD Variance Correction Adjusted Analysis*",
+                            "4) Complete Case MMM Adjusted Analysis",
+                            "5) Likely Outcome MMM Adjusted Analysis**",
+                            "6) Worst-Case MMM Sensitivity Analysis**",
+                            "7) MMM Unadjusted Pre-COVID-19 Analysis",
+                            "8) MMM Adjusted Pre-COVID-19 Analysis"),
+               coef = c(prim1$estimate[2],
+                           prim2$estimate[2],
+                           prim3$estimate[2],
+                           prim4$estimate[2],
+                           prim5$estimate[2],
+                           prim6$estimate[2],
+                           cov1$estimate[2],
+                           cov2$estimate[2]),
+                  se = c(prim1$std.error[2],
+                           prim2$std.error[2],
+                           se_prim3,
+                           prim4$std.error[2],
+                           prim5$std.error[2],
+                           prim6$std.error[2],
+                           cov1$std.error[2],
+                           cov2$std.error[2])) %>%
+  mutate(lb = coef - (1.96*se),
+         ub = coef + (1.96*se),
+         or = exp(coef),
+         or_lb = exp(lb),
+         or_ub = exp(ub),
+         `Odds Ratio (95% Confidence Interval)` = paste0(round(or, 2), " (", round(or_lb, 3), ", ", round(or_ub, 3), ")"))
+
+# now make a forestplot
+tabletext <- cbind(c("Analysis", fig2$Analysis), 
+                   c("Odds Ratio (95% CI)", fig2$`Odds Ratio (95% Confidence Interval)`))
+
+#pdf("fig2.pdf", height = 6, width = 10)
+forestplot(tabletext,
+           mean = c(NA, fig2$or),
+           lower = c(NA, fig2$or_lb),
+           upper = c(NA, fig2$or_ub),
+           is.summary = c(rep(TRUE, 1), rep(FALSE, 8)),
+           xlog = TRUE,
+           xlab = "Adjusted Odds Ratio",
+           boxsize = 0.15,
+           align = "l",
+           vertices = TRUE,
+           vertices.height = 0.05,
+           txt_gp = fpTxtGp(cex=1, 
+                            label=gpar(fontfamily="Arial"), 
+                            ticks=gpar(cex=0.75),
+                            xlab=gpar(cex=0.9)))
+#dev.off()
+# embed the font
+#embed_fonts("fig2.pdf")
+```
