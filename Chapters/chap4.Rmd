@@ -70,6 +70,21 @@ table1(~ factor(fp_final_binary) + fp_final_type + time_to_fp | group.female,
 tapply(aim2$Y_raw, aim2$clinic.female, table, useNA = "always")
 
 # no outcomes in clinic 22 and clinic 24...for now :|
+
+# make a table with time_to_fp in months
+quant_time <- quant %>% 
+  select(fp_final_binary, time_to_fp, group.female) %>%
+  mutate(fp_month = ifelse(is.na(time_to_fp), 9999, time_to_fp),
+         fp_month = ifelse(time_to_fp < 93, "0-3", fp_month),
+         fp_month = ifelse(time_to_fp > 92 & time_to_fp < 183, "3-6", fp_month),
+         fp_month = ifelse(time_to_fp > 182 & time_to_fp < 366, "6-12", fp_month),
+         fp_month = ifelse(time_to_fp > 365, "12+", fp_month),
+         fp_month = factor(fp_month, levels = c("0-3", "3-6", "6-12", "12+", "Missing")))
+
+table1(~ factor(fp_final_binary) + fp_month | group.female,
+       data = quant_time,
+       render.continuous = c(.="Median [Q1, Q3]"), overall = FALSE) %>%
+  t1flex()
 ```
 
 # Imputations
